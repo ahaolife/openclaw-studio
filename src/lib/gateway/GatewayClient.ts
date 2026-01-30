@@ -1,11 +1,9 @@
 import { logger } from "@/lib/logger";
-import { EventFrame, GatewayFrame, ReqFrame, ResFrame } from "./frames";
-
-type PendingRequest = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
-};
+import type { EventFrame } from "./frames";
+import {
+  GatewayBrowserClient,
+  type GatewayHelloOk,
+} from "./openclaw/GatewayBrowserClient";
 
 type StatusHandler = (status: GatewayStatus) => void;
 
@@ -43,12 +41,15 @@ export class GatewayResponseError extends Error {
 }
 
 export class GatewayClient {
-  private socket: WebSocket | null = null;
-  private pending = new Map<string, PendingRequest>();
+  private client: GatewayBrowserClient | null = null;
   private statusHandlers = new Set<StatusHandler>();
   private eventHandlers = new Set<EventHandler>();
   private status: GatewayStatus = "disconnected";
-  private lastChallenge: unknown = null;
+  private pendingConnect: Promise<void> | null = null;
+  private resolveConnect: (() => void) | null = null;
+  private rejectConnect: ((error: Error) => void) | null = null;
+  private manualDisconnect = false;
+  private lastHello: GatewayHelloOk | null = null;
 
   onStatus(handler: StatusHandler) {
     this.statusHandlers.add(handler);
@@ -69,75 +70,67 @@ export class GatewayClient {
     if (!options.gatewayUrl.trim()) {
       throw new Error("Gateway URL is required.");
     }
-    if (this.socket) {
+    if (this.client) {
       throw new Error("Gateway is already connected or connecting.");
     }
 
-    this.lastChallenge = null;
+    this.manualDisconnect = false;
     this.updateStatus("connecting");
 
-    const socket = new WebSocket(options.gatewayUrl);
-    this.socket = socket;
-
-    socket.addEventListener("message", (event) => {
-      this.handleMessage(event.data);
+    this.pendingConnect = new Promise<void>((resolve, reject) => {
+      this.resolveConnect = resolve;
+      this.rejectConnect = reject;
     });
 
-    socket.addEventListener("close", () => {
-      this.handleClose();
+    this.client = new GatewayBrowserClient({
+      url: options.gatewayUrl,
+      token: options.token,
+      onHello: (hello) => {
+        this.lastHello = hello;
+        this.updateStatus("connected");
+        this.resolveConnect?.();
+        this.clearConnectPromise();
+      },
+      onEvent: (event) => {
+        this.eventHandlers.forEach((handler) => handler(event));
+      },
+      onClose: ({ code, reason }) => {
+        const err = new Error(`Gateway closed (${code}): ${reason}`);
+        if (this.rejectConnect) {
+          this.rejectConnect(err);
+          this.clearConnectPromise();
+        }
+        this.updateStatus(this.manualDisconnect ? "disconnected" : "connecting");
+        if (this.manualDisconnect) {
+          logger.info("Gateway disconnected.");
+        }
+      },
+      onGap: ({ expected, received }) => {
+        logger.warn(`Gateway event gap expected ${expected}, received ${received}.`);
+      },
     });
 
-    socket.addEventListener("error", () => {
-      logger.error("Gateway socket error.");
-    });
+    this.client.start();
 
     try {
-      await this.waitForOpen(socket);
-
-      const connectParams: Record<string, unknown> = {
-        minProtocol: 3,
-        maxProtocol: 3,
-        role: "operator",
-        scopes: ["operator.admin", "operator.approvals", "operator.pairing"],
-        client: {
-          id: "openclaw-control-ui",
-          version: "0.1.0",
-          platform: navigator.platform ?? "web",
-          mode: "ui",
-        },
-        caps: [],
-        userAgent: navigator.userAgent,
-        locale: navigator.language,
-      };
-
-      if (options.token) {
-        connectParams.auth = { token: options.token };
-      }
-
-      await this.sendRequest("connect", connectParams);
-
-      this.updateStatus("connected");
-      logger.info("Gateway connected.");
-    } catch (error) {
-      const reason =
-        error instanceof Error ? error : new Error("Gateway connect failed.");
-      this.socket?.close();
-      this.socket = null;
-      this.clearPending(reason);
+      await this.pendingConnect;
+    } catch (err) {
+      this.client.stop();
+      this.client = null;
       this.updateStatus("disconnected");
-      throw error;
+      throw err;
     }
   }
 
   disconnect() {
-    if (!this.socket) {
+    if (!this.client) {
       return;
     }
 
-    this.socket.close();
-    this.socket = null;
-    this.lastChallenge = null;
-    this.clearPending(new Error("Gateway disconnected."));
+    this.manualDisconnect = true;
+    this.client.stop();
+    this.client = null;
+    this.clearConnectPromise();
     this.updateStatus("disconnected");
     logger.info("Gateway disconnected.");
   }
@@ -146,16 +139,16 @@ export class GatewayClient {
     if (!method.trim()) {
       throw new Error("Gateway method is required.");
     }
-    if (!this.socket || this.status !== "connected") {
+    if (!this.client || !this.client.connected) {
       throw new Error("Gateway is not connected.");
     }
 
-    const payload = await this.sendRequest(method, params);
+    const payload = await this.client.request<T>(method, params);
     return payload as T;
   }
 
-  getLastChallenge() {
-    return this.lastChallenge;
+  getLastHello() {
+    return this.lastHello;
   }
 
   private updateStatus(status: GatewayStatus) {
@@ -163,148 +156,9 @@ export class GatewayClient {
     this.statusHandlers.forEach((handler) => handler(status));
   }
 
-  private async waitForOpen(socket: WebSocket) {
-    if (socket.readyState === WebSocket.OPEN) {
-      return;
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const handleOpen = () => {
-        cleanup();
-        resolve();
-      };
-
-      const handleError = () => {
-        cleanup();
-        reject(new Error("Gateway connection failed."));
-      };
-
-      const handleClose = () => {
-        cleanup();
-        reject(new Error("Gateway closed before handshake."));
-      };
-
-      const cleanup = () => {
-        socket.removeEventListener("open", handleOpen);
-        socket.removeEventListener("error", handleError);
-        socket.removeEventListener("close", handleClose);
-      };
-
-      socket.addEventListener("open", handleOpen);
-      socket.addEventListener("error", handleError);
-      socket.addEventListener("close", handleClose);
-    });
-  }
-
-  private async waitForChallenge(timeoutMs: number) {
-    if (this.lastChallenge !== null) {
-      return this.lastChallenge;
-    }
-    return await new Promise<unknown | null>((resolve) => {
-      const timeoutId = setTimeout(() => {
-        resolve(null);
-      }, timeoutMs);
-
-      const unsubscribe = this.onEvent((event) => {
-        if (event.event !== "connect.challenge") {
-          return;
-        }
-        clearTimeout(timeoutId);
-        unsubscribe();
-        resolve(event.payload ?? null);
-      });
-    });
-  }
-
-  private async sendRequest(method: string, params: unknown) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error("Gateway socket is not open.");
-    }
-
-    const id = crypto.randomUUID();
-    const frame: ReqFrame = { type: "req", id, method, params };
-
-    const payload = await new Promise<unknown>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Gateway request timed out: ${method}`));
-      }, 20000);
-
-      this.pending.set(id, { resolve, reject, timeoutId });
-
-      this.socket?.send(JSON.stringify(frame));
-    });
-
-    return payload;
-  }
-
-  private handleMessage(data: unknown) {
-    if (typeof data !== "string") {
-      return;
-    }
-
-    let parsed: GatewayFrame | null = null;
-
-    try {
-      parsed = JSON.parse(data) as GatewayFrame;
-    } catch {
-      logger.error("Failed to parse gateway frame.");
-      return;
-    }
-
-    if (parsed.type === "event") {
-      if (parsed.event === "connect.challenge") {
-        this.lastChallenge = parsed.payload ?? null;
-      }
-      this.eventHandlers.forEach((handler) => handler(parsed));
-      return;
-    }
-
-    if (parsed.type === "res") {
-      this.handleResponse(parsed);
-      return;
-    }
-  }
-
-  private handleResponse(frame: ResFrame) {
-    const pending = this.pending.get(frame.id);
-    if (!pending) {
-      return;
-    }
-
-    this.pending.delete(frame.id);
-    clearTimeout(pending.timeoutId);
-
-    if (frame.ok) {
-      pending.resolve(frame.payload);
-      return;
-    }
-
-    if (frame.error) {
-      pending.reject(new GatewayResponseError(frame.error));
-      return;
-    }
-
-    pending.reject(new Error("Gateway request failed."));
-  }
-
-  private handleClose() {
-    if (!this.socket) {
-      return;
-    }
-
-    this.socket = null;
-    this.lastChallenge = null;
-    this.clearPending(new Error("Gateway disconnected."));
-    this.updateStatus("disconnected");
-    logger.info("Gateway socket closed.");
-  }
-
-  private clearPending(error: Error) {
-    this.pending.forEach((pending) => {
-      clearTimeout(pending.timeoutId);
-      pending.reject(error);
-    });
-    this.pending.clear();
+  private clearConnectPromise() {
+    this.pendingConnect = null;
+    this.resolveConnect = null;
+    this.rejectConnect = null;
   }
 }

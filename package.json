@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "sync:gateway-client": "node scripts/sync-openclaw-gateway-client.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "e2e": "playwright test"
   },
   "dependencies": {
     "@multiavatar/multiavatar": "github:multiavatar/Multiavatar",
+    "@noble/ed25519": "^3.0.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@vercel/otel": "^2.1.0",
     "@xyflow/react": "^12.10.0",

@@ -19,12 +19,25 @@ export type ResFrame = {
   };
 };
 
+export type GatewayStateVersion = {
+  presence: number;
+  health: number;
+};
+
 export type EventFrame = {
   type: "event";
   event: string;
-  payload: unknown;
+  payload?: unknown;
   seq?: number;
-  stateVersion?: number;
+  stateVersion?: GatewayStateVersion;
 };
 
 export type GatewayFrame = ReqFrame | ResFrame | EventFrame;
+
+export const parseGatewayFrame = (raw: string): GatewayFrame | null => {
+  try {
+    return JSON.parse(raw) as GatewayFrame;
+  } catch {
+    return null;
+  }
+};

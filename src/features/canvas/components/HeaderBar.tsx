@@ -16,7 +16,7 @@ type HeaderBarProps = {
 const statusDotStyles: Record<GatewayStatus, string> = {
   disconnected: "bg-slate-400",
   connecting: "bg-amber-400",
-  connected: "bg-emerald-400",
+  connected: "bg-blue-500",
 };
 
 const statusLabel: Record<GatewayStatus, string> = {
@@ -40,7 +40,7 @@ export const HeaderBar = ({
   const hasProjects = projects.length > 0;
   return (
     <div className="glass-panel px-6 py-4">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4">
+      <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex min-w-0 items-center gap-3">
           {hasProjects ? (
             <div className="relative">
@@ -70,7 +70,7 @@ export const HeaderBar = ({
           )}
         </div>
 
-        <div className="flex items-center justify-center">
+        <div className="flex flex-col items-end gap-2">
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-semibold uppercase text-slate-600">
             <span
               className={`h-2 w-2 rounded-full ${statusDotStyles[status]}`}
@@ -78,80 +78,79 @@ export const HeaderBar = ({
             />
             {statusLabel[status]}
           </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2">
-          <button
-            className="rounded-full bg-[var(--accent-strong)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            type="button"
-            onClick={onNewAgent}
-            disabled={!activeProjectId}
-          >
-            New Agent
-          </button>
-          <details className="relative">
-            <summary className="flex h-10 items-center gap-2 rounded-full border border-slate-300 bg-white/80 px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 [&::-webkit-details-marker]:hidden">
-              Workspaces
-              <span className="text-xs font-semibold text-slate-500">v</span>
-            </summary>
-            <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 text-sm shadow-xl">
-              <button
-                className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                type="button"
-                onClick={(event) => {
-                  onCreateProject();
-                  const details = event.currentTarget.closest(
-                    "details"
-                  ) as HTMLDetailsElement | null;
-                  if (details) details.open = false;
-                }}
-              >
-                New Workspace
-              </button>
-              <button
-                className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                type="button"
-                onClick={(event) => {
-                  onOpenProject();
-                  const details = event.currentTarget.closest(
-                    "details"
-                  ) as HTMLDetailsElement | null;
-                  if (details) details.open = false;
-                }}
-              >
-                Open Workspace
-              </button>
-              <button
-                className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
-                onClick={(event) => {
-                  onDeleteProject();
-                  const details = event.currentTarget.closest(
-                    "details"
-                  ) as HTMLDetailsElement | null;
-                  if (details) details.open = false;
-                }}
-                disabled={!activeProjectId}
-              >
-                Delete Workspace
-              </button>
-              {canCreateDiscordChannel ? (
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-full bg-[var(--accent-strong)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              onClick={onNewAgent}
+              disabled={!activeProjectId}
+            >
+              New Agent
+            </button>
+            <details className="relative">
+              <summary className="flex h-10 items-center gap-2 rounded-full border border-slate-300 bg-white/80 px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 [&::-webkit-details-marker]:hidden">
+                Workspaces
+                <span className="text-xs font-semibold text-slate-500">v</span>
+              </summary>
+              <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 bg-white/95 p-2 text-sm shadow-xl">
                 <button
-                  className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
                   type="button"
                   onClick={(event) => {
-                    onCreateDiscordChannel();
+                    onCreateProject();
                     const details = event.currentTarget.closest(
                       "details"
                     ) as HTMLDetailsElement | null;
                     if (details) details.open = false;
                   }}
                 >
-                  Create Discord Channel
+                  New Workspace
                 </button>
-              ) : null}
-            </div>
-          </details>
+                <button
+                  className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                  type="button"
+                  onClick={(event) => {
+                    onOpenProject();
+                    const details = event.currentTarget.closest(
+                      "details"
+                    ) as HTMLDetailsElement | null;
+                    if (details) details.open = false;
+                  }}
+                >
+                  Open Workspace
+                </button>
+                <button
+                  className="flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  onClick={(event) => {
+                    onDeleteProject();
+                    const details = event.currentTarget.closest(
+                      "details"
+                    ) as HTMLDetailsElement | null;
+                    if (details) details.open = false;
+                  }}
+                  disabled={!activeProjectId}
+                >
+                  Delete Workspace
+                </button>
+                {canCreateDiscordChannel ? (
+                  <button
+                    className="mt-1 flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    type="button"
+                    onClick={(event) => {
+                      onCreateDiscordChannel();
+                      const details = event.currentTarget.closest(
+                        "details"
+                      ) as HTMLDetailsElement | null;
+                      if (details) details.open = false;
+                    }}
+                  >
+                    Create Discord Channel
+                  </button>
+                ) : null}
+              </div>
+            </details>
+          </div>
         </div>
       </div>
     </div>
