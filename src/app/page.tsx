@@ -536,6 +536,15 @@ const AgentCanvasPage = () => {
     [client, dispatch, resolveCronJobForTile]
   );
 
+  const refreshHeartbeatLatestUpdate = useCallback(() => {
+    const projects = stateRef.current.projects;
+    for (const project of projects) {
+      for (const tile of project.tiles) {
+        void updateSpecialLatestUpdate(project.id, tile, "heartbeat");
+      }
+    }
+  }, [updateSpecialLatestUpdate]);
+
   const computeNewTilePosition = useCallback(
     (tileSize: { width: number; height: number }) => {
       if (!project) {
@@ -810,6 +819,7 @@ const AgentCanvasPage = () => {
       if (event.event !== "presence" && event.event !== "heartbeat") return;
       if (event.event === "heartbeat") {
         setHeartbeatTick((prev) => prev + 1);
+        refreshHeartbeatLatestUpdate();
       }
       if (summaryRefreshRef.current !== null) {
         window.clearTimeout(summaryRefreshRef.current);

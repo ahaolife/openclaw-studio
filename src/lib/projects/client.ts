@@ -22,6 +22,7 @@ import type {
   CronJobsResult,
   WorkspaceSettingsResult,
   WorkspaceSettingsUpdatePayload,
+  PathAutocompleteResult,
 } from "./types";
 import { fetchJson } from "@/lib/http";
 
@@ -174,6 +175,16 @@ export const fetchProjectTileHeartbeat = async (
 
 export const fetchCronJobs = async (): Promise<CronJobsResult> => {
   return fetchJson<CronJobsResult>("/api/cron", { cache: "no-store" });
+};
+
+export const fetchPathSuggestions = async (
+  query: string
+): Promise<PathAutocompleteResult> => {
+  const trimmed = query.trim();
+  const url = trimmed
+    ? `/api/path-suggestions?q=${encodeURIComponent(trimmed)}`
+    : "/api/path-suggestions";
+  return fetchJson<PathAutocompleteResult>(url, { cache: "no-store" });
 };
 
 export const updateProjectTileHeartbeat = async (
