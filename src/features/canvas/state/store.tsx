@@ -4,34 +4,32 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useReducer,
-  useRef,
   type ReactNode,
 } from "react";
 
-import type { Project, ProjectTile, ProjectsStore } from "@/lib/projects/types";
 import { CANVAS_BASE_ZOOM } from "@/lib/canvasDefaults";
 import { MAX_TILE_HEIGHT, MIN_TILE_SIZE } from "@/lib/canvasTileDefaults";
-import {
-  createProjectTile as apiCreateProjectTile,
-  deleteProjectTile as apiDeleteProjectTile,
-  deleteProject as apiDeleteProject,
-  fetchProjectsStore,
-  createOrOpenProject as apiCreateOrOpenProject,
-  updateProject as apiUpdateProject,
-  updateProjectTile as apiUpdateProjectTile,
-  saveProjectsStore,
-} from "@/lib/projects/client";
-import { buildSessionKey } from "@/lib/projects/sessionKey";
 
 export type AgentStatus = "idle" | "running" | "error";
 
 export type TilePosition = { x: number; y: number };
 export type TileSize = { width: number; height: number };
 
-export type AgentTile = ProjectTile & {
+export type AgentSeed = {
+  agentId: string;
+  name: string;
+  sessionKey: string;
+  position: TilePosition;
+  size: TileSize;
+  avatarSeed?: string | null;
+  avatarUrl?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
+};
+
+export type AgentTile = AgentSeed & {
   status: AgentStatus;
   outputLines: string[];
   lastResult: string | null;
@@ -49,10 +47,6 @@ export type AgentTile = ProjectTile & {
   historyLoadedAt: number | null;
 };
 
-export type ProjectRuntime = Omit<Project, "tiles"> & {
-  tiles: AgentTile[];
-};
-
 export type CanvasTransform = {
   zoom: number;
   offsetX: number;
@@ -60,228 +54,124 @@ export type CanvasTransform = {
 };
 
 export type CanvasState = {
-  projects: ProjectRuntime[];
-  activeProjectId: string | null;
-  selectedTileId: string | null;
+  agents: AgentTile[];
+  selectedAgentId: string | null;
   canvas: CanvasTransform;
   loading: boolean;
   error: string | null;
-  needsWorkspace: boolean;
 };
 
 type Action =
-  | { type: "loadStore"; store: ProjectsStore }
+  | { type: "hydrateAgents"; agents: AgentSeed[] }
   | { type: "setError"; error: string | null }
-  | { type: "setActiveProject"; projectId: string | null }
-  | { type: "addProject"; project: ProjectRuntime }
-  | { type: "removeProject"; projectId: string }
-  | { type: "updateProject"; projectId: string; patch: Partial<ProjectRuntime> }
-  | { type: "addTile"; projectId: string; tile: AgentTile }
-  | { type: "removeTile"; projectId: string; tileId: string }
-  | { type: "updateTile"; projectId: string; tileId: string; patch: Partial<AgentTile> }
-  | { type: "appendOutput"; projectId: string; tileId: string; line: string }
-  | { type: "setStream"; projectId: string; tileId: string; value: string | null }
-  | { type: "selectTile"; tileId: string | null }
+  | { type: "setLoading"; loading: boolean }
+  | { type: "updateAgent"; agentId: string; patch: Partial<AgentTile> }
+  | { type: "appendOutput"; agentId: string; line: string }
+  | { type: "setStream"; agentId: string; value: string | null }
+  | { type: "selectAgent"; agentId: string | null }
   | { type: "setCanvas"; patch: Partial<CanvasTransform> };
 
 const initialState: CanvasState = {
-  projects: [],
-  activeProjectId: null,
-  selectedTileId: null,
+  agents: [],
+  selectedAgentId: null,
   canvas: { zoom: CANVAS_BASE_ZOOM, offsetX: 0, offsetY: 0 },
   loading: true,
   error: null,
-  needsWorkspace: false,
 };
 
 const clampTileHeight = (height: number) =>
   Math.min(MAX_TILE_HEIGHT, Math.max(MIN_TILE_SIZE.height, height));
 
-const clampTileWidth = (width: number) =>
-  Math.max(MIN_TILE_SIZE.width, width);
+const clampTileWidth = (width: number) => Math.max(MIN_TILE_SIZE.width, width);
 
 const clampTileSize = (size: TileSize): TileSize => ({
   width: clampTileWidth(size.width),
   height: clampTileHeight(size.height),
 });
 
-const createRuntimeTile = (tile: ProjectTile): AgentTile => ({
-  ...tile,
-  size: clampTileSize(tile.size),
-  sessionKey: tile.sessionKey || buildSessionKey(tile.agentId, tile.id),
-  model: tile.model ?? "openai-codex/gpt-5.2-codex",
-  thinkingLevel: tile.thinkingLevel ?? "medium",
-  avatarSeed: tile.avatarSeed ?? tile.agentId,
-  archivedAt: tile.archivedAt ?? null,
-  status: "idle",
-  outputLines: [],
-  lastResult: null,
-  lastDiff: null,
-  runId: null,
-  streamText: null,
-  thinkingTrace: null,
-  latestOverride: null,
-  latestOverrideKind: null,
-  lastActivityAt: null,
-  latestPreview: null,
-  lastUserMessage: null,
-  draft: "",
-  sessionSettingsSynced: false,
-  historyLoadedAt: null,
-});
-
-const hydrateProject = (project: Project): ProjectRuntime => ({
-  ...project,
-  tiles: Array.isArray(project.tiles) ? project.tiles.map(createRuntimeTile) : [],
-});
-
-const dehydrateStore = (state: CanvasState): ProjectsStore => ({
-  version: 3,
-  activeProjectId: state.activeProjectId,
-  needsWorkspace: state.needsWorkspace,
-  projects: state.projects.map((project) => ({
-    id: project.id,
-    name: project.name,
-    repoPath: project.repoPath,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-    archivedAt: project.archivedAt ?? null,
-    tiles: project.tiles.map((tile) => ({
-      id: tile.id,
-      name: tile.name,
-      agentId: tile.agentId,
-      role: tile.role,
-      sessionKey: tile.sessionKey,
-      workspacePath: tile.workspacePath,
-      archivedAt: tile.archivedAt ?? null,
-      model: tile.model ?? null,
-      thinkingLevel: tile.thinkingLevel ?? null,
-      avatarSeed: tile.avatarSeed ?? null,
-      position: tile.position,
-      size: tile.size,
-    })),
-  })),
-});
-
-const updateProjectList = (
-  state: CanvasState,
-  updater: (projects: ProjectRuntime[]) => ProjectRuntime[]
-): CanvasState => {
-  return { ...state, projects: updater(state.projects) };
+const createRuntimeAgent = (seed: AgentSeed, existing?: AgentTile | null): AgentTile => {
+  const size = clampTileSize(seed.size);
+  return {
+    ...seed,
+    size,
+    avatarSeed: seed.avatarSeed ?? existing?.avatarSeed ?? seed.agentId,
+    avatarUrl: seed.avatarUrl ?? existing?.avatarUrl ?? null,
+    model: seed.model ?? existing?.model ?? "openai-codex/gpt-5.2-codex",
+    thinkingLevel: seed.thinkingLevel ?? existing?.thinkingLevel ?? "medium",
+    status: existing?.status ?? "idle",
+    outputLines: existing?.outputLines ?? [],
+    lastResult: existing?.lastResult ?? null,
+    lastDiff: existing?.lastDiff ?? null,
+    runId: existing?.runId ?? null,
+    streamText: existing?.streamText ?? null,
+    thinkingTrace: existing?.thinkingTrace ?? null,
+    latestOverride: existing?.latestOverride ?? null,
+    latestOverrideKind: existing?.latestOverrideKind ?? null,
+    lastActivityAt: existing?.lastActivityAt ?? null,
+    latestPreview: existing?.latestPreview ?? null,
+    lastUserMessage: existing?.lastUserMessage ?? null,
+    draft: existing?.draft ?? "",
+    sessionSettingsSynced: existing?.sessionSettingsSynced ?? false,
+    historyLoadedAt: existing?.historyLoadedAt ?? null,
+  };
 };
 
 const reducer = (state: CanvasState, action: Action): CanvasState => {
   switch (action.type) {
-    case "loadStore": {
-      const projects = action.store.projects.map(hydrateProject);
-      const activeProjectId =
-        action.store.activeProjectId &&
-        projects.some((project) => project.id === action.store.activeProjectId)
-          ? action.store.activeProjectId
-          : projects[0]?.id ?? null;
+    case "hydrateAgents": {
+      const byId = new Map(state.agents.map((agent) => [agent.agentId, agent]));
+      const agents = action.agents.map((seed) =>
+        createRuntimeAgent(seed, byId.get(seed.agentId))
+      );
+      const selectedAgentId =
+        state.selectedAgentId && agents.some((agent) => agent.agentId === state.selectedAgentId)
+          ? state.selectedAgentId
+          : agents[0]?.agentId ?? null;
       return {
         ...state,
-        projects,
-        activeProjectId,
+        agents,
+        selectedAgentId,
         loading: false,
         error: null,
-        needsWorkspace: Boolean(action.store.needsWorkspace),
       };
     }
     case "setError":
       return { ...state, error: action.error, loading: false };
-    case "setActiveProject":
-      return { ...state, activeProjectId: action.projectId, selectedTileId: null };
-    case "addProject":
-      return updateProjectList(state, (projects) => [...projects, action.project]);
-    case "removeProject":
-      return updateProjectList(state, (projects) =>
-        projects.filter((project) => project.id !== action.projectId)
-      );
-    case "updateProject":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
-            ? { ...project, ...action.patch, updatedAt: Date.now() }
-            : project
-        )
-      );
-    case "addTile":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
+    case "setLoading":
+      return { ...state, loading: action.loading };
+    case "updateAgent":
+      return {
+        ...state,
+        agents: state.agents.map((agent) =>
+          agent.agentId === action.agentId
             ? {
-                ...project,
-                tiles: [...project.tiles, action.tile],
-                updatedAt: Date.now(),
+                ...agent,
+                ...action.patch,
+                size: action.patch.size ? clampTileSize(action.patch.size) : agent.size,
               }
-            : project
-        )
-      );
-    case "removeTile":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
-            ? {
-                ...project,
-                tiles: project.tiles.filter((tile) => tile.id !== action.tileId),
-                updatedAt: Date.now(),
-              }
-            : project
-        )
-      );
-    case "updateTile":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
-            ? {
-                ...project,
-                tiles: project.tiles.map((tile) =>
-                  tile.id === action.tileId
-                    ? {
-                        ...tile,
-                        ...action.patch,
-                        size: action.patch.size
-                          ? clampTileSize(action.patch.size)
-                          : tile.size,
-                      }
-                    : tile
-                ),
-                updatedAt: Date.now(),
-              }
-            : project
-        )
-      );
+            : agent
+        ),
+      };
     case "appendOutput":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
-            ? {
-                ...project,
-                tiles: project.tiles.map((tile) =>
-                  tile.id === action.tileId
-                    ? { ...tile, outputLines: [...tile.outputLines, action.line] }
-                    : tile
-                ),
-              }
-            : project
-        )
-      );
+      return {
+        ...state,
+        agents: state.agents.map((agent) =>
+          agent.agentId === action.agentId
+            ? { ...agent, outputLines: [...agent.outputLines, action.line] }
+            : agent
+        ),
+      };
     case "setStream":
-      return updateProjectList(state, (projects) =>
-        projects.map((project) =>
-          project.id === action.projectId
-            ? {
-                ...project,
-                tiles: project.tiles.map((tile) =>
-                  tile.id === action.tileId ? { ...tile, streamText: action.value } : tile
-                ),
-              }
-            : project
-        )
-      );
-    case "selectTile":
-      return { ...state, selectedTileId: action.tileId };
+      return {
+        ...state,
+        agents: state.agents.map((agent) =>
+          agent.agentId === action.agentId
+            ? { ...agent, streamText: action.value }
+            : agent
+        ),
+      };
+    case "selectAgent":
+      return { ...state, selectedAgentId: action.agentId };
     case "setCanvas":
       return { ...state, canvas: { ...state.canvas, ...action.patch } };
     default:
@@ -289,256 +179,58 @@ const reducer = (state: CanvasState, action: Action): CanvasState => {
   }
 };
 
-type StoreContextValue = {
+export const agentCanvasReducer = reducer;
+export const initialAgentCanvasState = initialState;
+
+type AgentCanvasContextValue = {
   state: CanvasState;
   dispatch: React.Dispatch<Action>;
-  createTile: (
-    projectId: string,
-    name: string,
-    role: ProjectTile["role"]
-  ) => Promise<{ tile: ProjectTile; warnings: string[] } | null>;
-  refreshStore: () => Promise<void>;
-  createOrOpenProject: (
-    payload: { name: string } | { path: string }
-  ) => Promise<{ warnings: string[] } | null>;
-  deleteProject: (projectId: string) => Promise<{ warnings: string[] } | null>;
-  restoreProject: (projectId: string) => Promise<{ warnings: string[] } | null>;
-  deleteTile: (
-    projectId: string,
-    tileId: string
-  ) => Promise<{ warnings: string[] } | null>;
-  restoreTile: (
-    projectId: string,
-    tileId: string
-  ) => Promise<{ warnings: string[] } | null>;
-  renameTile: (
-    projectId: string,
-    tileId: string,
-    name: string
-  ) => Promise<{ warnings: string[] } | { error: string } | null>;
-  updateTile: (
-    projectId: string,
-    tileId: string,
-    payload: { avatarSeed?: string | null }
-  ) => Promise<{ warnings: string[] } | { error: string } | null>;
+  hydrateAgents: (agents: AgentSeed[]) => void;
+  setLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
 };
 
-const StoreContext = createContext<StoreContextValue | null>(null);
+const AgentCanvasContext = createContext<AgentCanvasContextValue | null>(null);
 
 export const AgentCanvasProvider = ({ children }: { children: ReactNode }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const lastSavedRef = useRef<string | null>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refreshStore = useCallback(async () => {
-    try {
-      const store = await fetchProjectsStore();
-      dispatch({ type: "loadStore", store });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load workspace.";
-      dispatch({ type: "setError", error: message });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStore();
-  }, [refreshStore]);
-
-  useEffect(() => {
-    if (state.loading) return;
-    const payload = dehydrateStore(state);
-    const serialized = JSON.stringify(payload);
-    if (serialized === lastSavedRef.current) return;
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = setTimeout(() => {
-      void saveProjectsStore(payload).then(() => {
-        lastSavedRef.current = serialized;
-      });
-    }, 250);
-  }, [state]);
-
-  const createTile = useCallback(
-    async (projectId: string, name: string, role: ProjectTile["role"]) => {
-      try {
-        const result = await apiCreateProjectTile(projectId, { name, role });
-        dispatch({
-          type: "addTile",
-          projectId,
-          tile: createRuntimeTile(result.tile),
-        });
-        return { tile: result.tile, warnings: result.warnings };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to create tile.";
-        dispatch({ type: "setError", error: message });
-        return null;
-      }
+  const hydrateAgents = useCallback(
+    (agents: AgentSeed[]) => {
+      dispatch({ type: "hydrateAgents", agents });
     },
     [dispatch]
   );
 
-  const createOrOpenProject = useCallback(
-    async (payload: { name: string } | { path: string }) => {
-    try {
-      const result = await apiCreateOrOpenProject(payload);
-      dispatch({ type: "loadStore", store: result.store });
-      return { warnings: result.warnings };
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to create or open workspace.";
-      dispatch({ type: "setError", error: message });
-      return null;
-    }
-  }, []);
-
-  const deleteProject = useCallback(async (projectId: string) => {
-    try {
-      const result = await apiDeleteProject(projectId);
-      dispatch({ type: "loadStore", store: result.store });
-      return { warnings: result.warnings };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to archive workspace.";
-      dispatch({ type: "setError", error: message });
-      return null;
-    }
-  }, []);
-
-  const restoreProject = useCallback(async (projectId: string) => {
-    try {
-      const result = await apiUpdateProject(projectId, { archivedAt: null });
-      dispatch({ type: "loadStore", store: result.store });
-      return { warnings: result.warnings };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to restore workspace.";
-      dispatch({ type: "setError", error: message });
-      return null;
-    }
-  }, []);
-
-  const deleteTile = useCallback(async (projectId: string, tileId: string) => {
-    try {
-      const result = await apiDeleteProjectTile(projectId, tileId);
-      dispatch({ type: "loadStore", store: result.store });
-      return { warnings: result.warnings };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to archive tile.";
-      dispatch({ type: "setError", error: message });
-      return null;
-    }
-  }, []);
-
-  const restoreTile = useCallback(async (projectId: string, tileId: string) => {
-    try {
-      const result = await apiUpdateProjectTile(projectId, tileId, {
-        archivedAt: null,
-      });
-      dispatch({ type: "loadStore", store: result.store });
-      return { warnings: result.warnings };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to restore tile.";
-      dispatch({ type: "setError", error: message });
-      return null;
-    }
-  }, []);
-
-  const renameTile = useCallback(
-    async (projectId: string, tileId: string, name: string) => {
-      const project = state.projects.find((item) => item.id === projectId);
-      const tile = project?.tiles.find((item) => item.id === tileId);
-      if (tile) {
-        dispatch({ type: "updateTile", projectId, tileId, patch: { name } });
-      }
-      try {
-        const result = await apiUpdateProjectTile(projectId, tileId, { name });
-        return { warnings: result.warnings };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to rename tile.";
-        if (tile) {
-          dispatch({
-            type: "updateTile",
-            projectId,
-            tileId,
-            patch: { name: tile.name },
-          });
-        }
-        dispatch({ type: "setError", error: message });
-        return { error: message };
-      }
-    },
-    [dispatch, state.projects]
+  const setLoading = useCallback(
+    (loading: boolean) => dispatch({ type: "setLoading", loading }),
+    [dispatch]
   );
 
-  const updateTile = useCallback(
-    async (
-      projectId: string,
-      tileId: string,
-      payload: { avatarSeed?: string | null }
-    ) => {
-      const project = state.projects.find((item) => item.id === projectId);
-      const tile = project?.tiles.find((item) => item.id === tileId);
-      if (tile) {
-        dispatch({ type: "updateTile", projectId, tileId, patch: payload });
-      }
-      try {
-        const result = await apiUpdateProjectTile(projectId, tileId, payload);
-        return { warnings: result.warnings };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to update tile.";
-        if (tile) {
-          dispatch({
-            type: "updateTile",
-            projectId,
-            tileId,
-            patch: { avatarSeed: tile.avatarSeed ?? null },
-          });
-        }
-        dispatch({ type: "setError", error: message });
-        return { error: message };
-      }
-    },
-    [dispatch, state.projects]
+  const setError = useCallback(
+    (error: string | null) => dispatch({ type: "setError", error }),
+    [dispatch]
   );
 
-  const value = useMemo<StoreContextValue>(() => {
-    return {
-      state,
-      dispatch,
-      createTile,
-      refreshStore,
-      createOrOpenProject,
-      deleteProject,
-      restoreProject,
-      deleteTile,
-      restoreTile,
-      renameTile,
-      updateTile,
-    };
-  }, [
-    state,
-    createTile,
-    refreshStore,
-    createOrOpenProject,
-    deleteProject,
-    restoreProject,
-    deleteTile,
-    restoreTile,
-    renameTile,
-    updateTile,
-  ]);
+  const value = useMemo(
+    () => ({ state, dispatch, hydrateAgents, setLoading, setError }),
+    [dispatch, hydrateAgents, setError, setLoading, state]
+  );
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <AgentCanvasContext.Provider value={value}>{children}</AgentCanvasContext.Provider>
+  );
 };
 
 export const useAgentCanvasStore = () => {
-  const ctx = useContext(StoreContext);
+  const ctx = useContext(AgentCanvasContext);
   if (!ctx) {
     throw new Error("AgentCanvasProvider is missing.");
   }
   return ctx;
 };
 
-export const getActiveProject = (state: CanvasState): ProjectRuntime | null => {
-  return state.projects.find((project) => project.id === state.activeProjectId) ?? null;
+export const getSelectedAgent = (state: CanvasState): AgentTile | null => {
+  if (!state.selectedAgentId) return null;
+  return state.agents.find((agent) => agent.agentId === state.selectedAgentId) ?? null;
 };

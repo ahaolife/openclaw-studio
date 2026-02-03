@@ -7,13 +7,12 @@ import {
 } from "@/lib/text/message-metadata";
 
 describe("message-metadata", () => {
-  it("builds an envelope that the UI metadata helpers can detect and strip", () => {
+  it("returns plain messages without metadata", () => {
     const built = buildAgentInstruction({
-      workspacePath: "/tmp/ws",
       message: "hello",
     });
 
-    expect(isUiMetadataPrefix(built)).toBe(true);
+    expect(isUiMetadataPrefix(built)).toBe(false);
     expect(stripUiMetadata(built)).toBe("hello");
   });
 });

@@ -5,6 +5,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentTile } from "@/features/canvas/state/store";
+import type { GatewayClient } from "@/lib/gateway/GatewayClient";
+import {
+  resolveHeartbeatSettings,
+  updateGatewayHeartbeat,
+  type GatewayConfigSnapshot,
+} from "@/lib/gateway/agentConfig";
+import { invokeGatewayTool } from "@/lib/gateway/tools";
 import {
   isTraceMarkdown,
   stripTraceMarkdown,
@@ -12,12 +19,6 @@ import {
   parseToolMarkdown,
 } from "@/lib/text/message-extract";
 import type { GatewayModelChoice } from "@/lib/gateway/models";
-import {
-  fetchProjectTileHeartbeat,
-  fetchProjectTileWorkspaceFiles,
-  updateProjectTileHeartbeat,
-  updateProjectTileWorkspaceFiles,
-} from "@/lib/projects/client";
 import {
   createWorkspaceFilesState,
   isWorkspaceFileName,
@@ -31,24 +32,22 @@ const HEARTBEAT_INTERVAL_OPTIONS = ["15m", "30m", "1h", "2h", "6h", "12h", "24h"
 
 type AgentInspectPanelProps = {
   tile: AgentTile;
-  projectId: string;
+  client: GatewayClient;
   models: GatewayModelChoice[];
   onClose: () => void;
   onLoadHistory: () => void;
   onModelChange: (value: string | null) => void;
   onThinkingChange: (value: string | null) => void;
-  onDelete: () => void;
 };
 
 export const AgentInspectPanel = ({
   tile,
-  projectId,
+  client,
   models,
   onClose,
   onLoadHistory,
   onModelChange,
   onThinkingChange,
-  onDelete,
 }: AgentInspectPanelProps) => {
   const [workspaceFiles, setWorkspaceFiles] = useState(createWorkspaceFilesState);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceFileName>(
@@ -103,6 +102,28 @@ export const AgentInspectPanel = ({
     []
   );
 
+  const extractToolText = useCallback((result: unknown) => {
+    if (!result || typeof result !== "object") return "";
+    const record = result as Record<string, unknown>;
+    if (typeof record.text === "string") return record.text;
+    const content = record.content;
+    if (!Array.isArray(content)) return "";
+    const blocks = content
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const block = item as Record<string, unknown>;
+        if (block.type !== "text" || typeof block.text !== "string") return null;
+        return block.text;
+      })
+      .filter((text): text is string => Boolean(text));
+    return blocks.join("");
+  }, []);
+
+  const isMissingFileError = useCallback(
+    (message: string) => /no such file|enoent/i.test(message),
+    []
+  );
+
   useEffect(() => {
     const raf = requestAnimationFrame(scrollOutputToBottom);
     return () => cancelAnimationFrame(raf);
@@ -112,9 +133,30 @@ export const AgentInspectPanel = ({
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     try {
-      const result = await fetchProjectTileWorkspaceFiles(projectId, tile.id);
+      const sessionKey = tile.sessionKey?.trim();
+      if (!sessionKey) {
+        setWorkspaceError("Session key is missing for this agent.");
+        return;
+      }
+      const results = await Promise.all(
+        WORKSPACE_FILE_NAMES.map(async (name) => {
+          const response = await invokeGatewayTool({
+            tool: "read",
+            sessionKey,
+            args: { path: name },
+          });
+          if (!response.ok) {
+            if (isMissingFileError(response.error)) {
+              return { name, content: "", exists: false };
+            }
+            throw new Error(response.error);
+          }
+          const content = extractToolText(response.result);
+          return { name, content, exists: true };
+        })
+      );
       const nextState = createWorkspaceFilesState();
-      for (const file of result.files) {
+      for (const file of results) {
         if (!isWorkspaceFileName(file.name)) continue;
         nextState[file.name] = {
           content: file.content ?? "",
@@ -130,25 +172,35 @@ export const AgentInspectPanel = ({
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [projectId, tile.id]);
+  }, [extractToolText, isMissingFileError, tile.sessionKey]);
 
   const saveWorkspaceFiles = useCallback(async () => {
     setWorkspaceSaving(true);
     setWorkspaceError(null);
     try {
-      const payload = {
-        files: WORKSPACE_FILE_NAMES.map((name) => ({
-          name,
-          content: workspaceFiles[name].content,
-        })),
-      };
-      const result = await updateProjectTileWorkspaceFiles(projectId, tile.id, payload);
+      const sessionKey = tile.sessionKey?.trim();
+      if (!sessionKey) {
+        setWorkspaceError("Session key is missing for this agent.");
+        return;
+      }
+      await Promise.all(
+        WORKSPACE_FILE_NAMES.map(async (name) => {
+          const response = await invokeGatewayTool({
+            tool: "write",
+            sessionKey,
+            args: { path: name, content: workspaceFiles[name].content },
+          });
+          if (!response.ok) {
+            throw new Error(response.error);
+          }
+          return name;
+        })
+      );
       const nextState = createWorkspaceFilesState();
-      for (const file of result.files) {
-        if (!isWorkspaceFileName(file.name)) continue;
-        nextState[file.name] = {
-          content: file.content ?? "",
-          exists: Boolean(file.exists),
+      for (const name of WORKSPACE_FILE_NAMES) {
+        nextState[name] = {
+          content: workspaceFiles[name].content,
+          exists: true,
         };
       }
       setWorkspaceFiles(nextState);
@@ -160,7 +212,7 @@ export const AgentInspectPanel = ({
     } finally {
       setWorkspaceSaving(false);
     }
-  }, [projectId, tile.id, workspaceFiles]);
+  }, [tile.sessionKey, workspaceFiles]);
 
   const handleWorkspaceTabChange = useCallback(
     (nextTab: WorkspaceFileName) => {
@@ -177,7 +229,10 @@ export const AgentInspectPanel = ({
     setHeartbeatLoading(true);
     setHeartbeatError(null);
     try {
-      const result = await fetchProjectTileHeartbeat(projectId, tile.id);
+      const snapshot = await client.call<GatewayConfigSnapshot>("config.get", {});
+      const config =
+        snapshot.config && typeof snapshot.config === "object" ? snapshot.config : {};
+      const result = resolveHeartbeatSettings(config, tile.agentId);
       const every = result.heartbeat.every ?? "30m";
       const enabled = every !== "0m";
       const isPreset = HEARTBEAT_INTERVAL_OPTIONS.includes(every);
@@ -223,7 +278,7 @@ export const AgentInspectPanel = ({
     } finally {
       setHeartbeatLoading(false);
     }
-  }, [projectId, tile.id]);
+  }, [client, tile.agentId]);
 
   const saveHeartbeat = useCallback(async () => {
     setHeartbeatSaving(true);
@@ -249,17 +304,47 @@ export const AgentInspectPanel = ({
         heartbeatActiveHoursEnabled && heartbeatActiveStart && heartbeatActiveEnd
           ? { start: heartbeatActiveStart, end: heartbeatActiveEnd }
           : null;
-      const result = await updateProjectTileHeartbeat(projectId, tile.id, {
-        override: heartbeatOverride,
-        heartbeat: {
-          every,
-          target: target || "last",
-          includeReasoning: heartbeatIncludeReasoning,
-          ackMaxChars,
-          activeHours,
+      const result = await updateGatewayHeartbeat({
+        client,
+        agentId: tile.agentId,
+        sessionKey: tile.sessionKey,
+        payload: {
+          override: heartbeatOverride,
+          heartbeat: {
+            every,
+            target: target || "last",
+            includeReasoning: heartbeatIncludeReasoning,
+            ackMaxChars,
+            activeHours,
+          },
         },
       });
       setHeartbeatOverride(result.hasOverride);
+      setHeartbeatEnabled(result.heartbeat.every !== "0m");
+      setHeartbeatEvery(result.heartbeat.every);
+      setHeartbeatTargetMode(
+        result.heartbeat.target === "last" || result.heartbeat.target === "none"
+          ? result.heartbeat.target
+          : "custom"
+      );
+      setHeartbeatTargetCustom(
+        result.heartbeat.target === "last" || result.heartbeat.target === "none"
+          ? ""
+          : result.heartbeat.target
+      );
+      setHeartbeatIncludeReasoning(result.heartbeat.includeReasoning);
+      if (result.heartbeat.activeHours) {
+        setHeartbeatActiveHoursEnabled(true);
+        setHeartbeatActiveStart(result.heartbeat.activeHours.start);
+        setHeartbeatActiveEnd(result.heartbeat.activeHours.end);
+      } else {
+        setHeartbeatActiveHoursEnabled(false);
+      }
+      if (typeof result.heartbeat.ackMaxChars === "number") {
+        setHeartbeatAckMaxChars(String(result.heartbeat.ackMaxChars));
+      } else {
+        setHeartbeatAckMaxChars("300");
+      }
       setHeartbeatDirty(false);
     } catch (err) {
       const message =
@@ -281,8 +366,8 @@ export const AgentInspectPanel = ({
     heartbeatOverride,
     heartbeatTargetCustom,
     heartbeatTargetMode,
-    projectId,
-    tile.id,
+    client,
+    tile.agentId,
   ]);
 
   useEffect(() => {
@@ -416,7 +501,7 @@ export const AgentInspectPanel = ({
               <div className="flex flex-col gap-4">
                 {activityBlocks.map((block, index) => (
                   <div
-                    key={`${tile.id}-activity-${index}`}
+                    key={`${tile.agentId}-activity-${index}`}
                     className="pb-4 last:pb-0"
                   >
                     {block.user ? (
@@ -430,7 +515,7 @@ export const AgentInspectPanel = ({
                       <div className="mt-2 flex flex-col gap-2">
                         {block.traces.map((trace, traceIndex) => (
                           <details
-                            key={`${tile.id}-trace-${index}-${traceIndex}`}
+                            key={`${tile.agentId}-trace-${index}-${traceIndex}`}
                             className="rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground"
                           >
                             <summary className="cursor-pointer select-none font-semibold">
@@ -456,7 +541,7 @@ export const AgentInspectPanel = ({
                             : summaryLabel;
                           return (
                             <details
-                              key={`${tile.id}-tool-${index}-${toolIndex}`}
+                              key={`${tile.agentId}-tool-${index}-${toolIndex}`}
                               className="rounded-md bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground"
                             >
                               <summary className="cursor-pointer select-none font-semibold">
@@ -478,7 +563,7 @@ export const AgentInspectPanel = ({
                       <div className="mt-2 flex flex-col gap-2 text-foreground">
                         {block.assistant.map((line, lineIndex) => (
                           <div
-                            key={`${tile.id}-assistant-${index}-${lineIndex}`}
+                            key={`${tile.agentId}-assistant-${index}-${lineIndex}`}
                             className="agent-markdown"
                           >
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -645,14 +730,6 @@ export const AgentInspectPanel = ({
               <div />
             )}
           </div>
-
-          <button
-            className="mt-4 w-full max-w-xs rounded-lg border border-destructive bg-destructive px-3 py-2 text-xs font-semibold uppercase text-destructive-foreground"
-            type="button"
-            onClick={onDelete}
-          >
-            {tile.archivedAt ? "Restore agent" : "Archive agent"}
-          </button>
 
           <div className="mt-4 rounded-lg border border-border bg-card p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">

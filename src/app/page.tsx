@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { CanvasFlow } from "@/features/canvas/components/CanvasFlow";
 import { AgentInspectPanel } from "@/features/canvas/components/AgentInspectPanel";
 import { HeaderBar } from "@/features/canvas/components/HeaderBar";
-import { WorkspaceSettingsPanel } from "@/features/canvas/components/WorkspaceSettingsPanel";
-import { MAX_TILE_HEIGHT, MIN_TILE_SIZE } from "@/lib/canvasTileDefaults";
+import { ConnectionPanel } from "@/features/canvas/components/ConnectionPanel";
+import { MIN_TILE_SIZE } from "@/lib/canvasTileDefaults";
 import { screenToWorld, worldToScreen } from "@/features/canvas/lib/transform";
 import {
   extractText,
@@ -15,13 +15,18 @@ import {
   isTraceMarkdown,
   extractToolLines,
 } from "@/lib/text/message-extract";
-import { isHeartbeatPrompt, isUiMetadataPrefix, stripUiMetadata } from "@/lib/text/message-metadata";
+import {
+  buildAgentInstruction,
+  isHeartbeatPrompt,
+  isUiMetadataPrefix,
+  stripUiMetadata,
+} from "@/lib/text/message-metadata";
 import { useGatewayConnection } from "@/lib/gateway/useGatewayConnection";
 import type { EventFrame } from "@/lib/gateway/frames";
 import type { GatewayModelChoice } from "@/lib/gateway/models";
 import {
   AgentCanvasProvider,
-  getActiveProject,
+  getSelectedAgent,
   useAgentCanvasStore,
 } from "@/features/canvas/state/store";
 import {
@@ -30,20 +35,16 @@ import {
   getAgentSummaryPatch,
   getChatSummaryPatch,
 } from "@/features/canvas/state/summary";
-import {
-  createProjectDiscordChannel,
-  fetchProjectCleanupPreview,
-  runProjectCleanup,
-  fetchCronJobs,
-} from "@/lib/projects/client";
+import { fetchCronJobs } from "@/lib/projects/client";
 import { createRandomAgentName, normalizeAgentName } from "@/lib/names/agentNames";
-import { buildAgentInstruction } from "@/lib/text/message-metadata";
-import { filterArchivedItems } from "@/lib/projects/archive";
-import type { AgentTile, ProjectRuntime } from "@/features/canvas/state/store";
+import type { AgentSeed, AgentTile } from "@/features/canvas/state/store";
 import type { CronJobSummary } from "@/lib/projects/types";
 import { logger } from "@/lib/logger";
-import { parseAgentIdFromSessionKey } from "@/lib/projects/sessionKey";
+import { renameGatewayAgent } from "@/lib/gateway/agentConfig";
+import { parseAgentIdFromSessionKey, buildAgentMainSessionKey } from "@/lib/gateway/sessionKeys";
 import { buildAvatarDataUrl } from "@/lib/avatars/multiavatar";
+import { fetchStudioSettings, updateStudioSettings } from "@/lib/studio/client";
+import { resolveGatewayLayout } from "@/lib/studio/settings";
 // (CANVAS_BASE_ZOOM import removed)
 
 type ChatHistoryMessage = Record<string, unknown>;
@@ -64,6 +65,23 @@ type GatewayConfigSnapshot = {
       };
     };
   };
+};
+
+type AgentsListResult = {
+  defaultId: string;
+  mainKey: string;
+  scope?: string;
+  agents: Array<{
+    id: string;
+    name?: string;
+    identity?: {
+      name?: string;
+      theme?: string;
+      emoji?: string;
+      avatar?: string;
+      avatarUrl?: string;
+    };
+  }>;
 };
 
 type SessionPreviewItem = {
@@ -239,48 +257,36 @@ const mergeHistoryWithPending = (historyLines: string[], currentLines: string[])
   return merged;
 };
 
-const findTileBySessionKey = (
-  projects: ProjectRuntime[],
-  sessionKey: string
-): { projectId: string; tileId: string } | null => {
-  for (const project of projects) {
-    const tile = project.tiles.find((entry) => entry.sessionKey === sessionKey);
-    if (tile) {
-      return { projectId: project.id, tileId: tile.id };
-    }
+const findAgentBySessionKey = (agents: AgentTile[], sessionKey: string): string | null => {
+  const parsed = parseAgentIdFromSessionKey(sessionKey);
+  if (parsed && agents.some((agent) => agent.agentId === parsed)) {
+    return parsed;
   }
-  return null;
+  const exact = agents.find((agent) => agent.sessionKey === sessionKey);
+  return exact ? exact.agentId : null;
 };
 
-const findTileByRunId = (
-  projects: ProjectRuntime[],
-  runId: string
-): { projectId: string; tileId: string } | null => {
-  for (const project of projects) {
-    const tile = project.tiles.find((entry) => entry.runId === runId);
-    if (tile) {
-      return { projectId: project.id, tileId: tile.id };
-    }
-  }
-  return null;
+const findAgentByRunId = (agents: AgentTile[], runId: string): string | null => {
+  const match = agents.find((agent) => agent.runId === runId);
+  return match ? match.agentId : null;
 };
 
 const AgentCanvasPage = () => {
-  const { client, status } = useGatewayConnection();
-
   const {
-    state,
-    dispatch,
-    createTile,
-    refreshStore,
-    deleteTile,
-    restoreTile,
-    renameTile,
-    updateTile,
-  } = useAgentCanvasStore();
-  const activeProject = getActiveProject(state);
-  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
+    client,
+    status,
+    gatewayUrl,
+    token,
+    error: gatewayError,
+    connect,
+    disconnect,
+    setGatewayUrl,
+    setToken,
+    clearError,
+  } = useGatewayConnection();
+
+  const { state, dispatch, hydrateAgents, setError, setLoading } = useAgentCanvasStore();
+  const [showConnectionPanel, setShowConnectionPanel] = useState(false);
   const [heartbeatTick, setHeartbeatTick] = useState(0);
   const historyInFlightRef = useRef<Set<string>>(new Set());
   const stateRef = useRef(state);
@@ -290,7 +296,7 @@ const AgentCanvasPage = () => {
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [gatewayModels, setGatewayModels] = useState<GatewayModelChoice[]>([]);
   const [gatewayModelsError, setGatewayModelsError] = useState<string | null>(null);
-  const [inspectTileId, setInspectTileId] = useState<string | null>(null);
+  const [inspectAgentId, setInspectAgentId] = useState<string | null>(null);
   const [headerOffset, setHeaderOffset] = useState(0);
   const thinkingDebugRef = useRef<Set<string>>(new Set());
   const chatRunSeenRef = useRef<Set<string>>(new Set());
@@ -298,39 +304,21 @@ const AgentCanvasPage = () => {
   const specialUpdateInFlightRef = useRef<Set<string>>(new Set());
   // flowInstance removed (zoom controls live in the bottom-right ReactFlow Controls).
 
-  const visibleProjects = useMemo(
-    () => filterArchivedItems(state.projects, showArchived),
-    [state.projects, showArchived]
-  );
-  const hasArchivedTiles = useMemo(
-    () => state.projects.some((entry) => entry.tiles.some((tile) => tile.archivedAt)),
-    [state.projects]
-  );
-  const project = useMemo(() => {
-    if (activeProject && (showArchived || !activeProject.archivedAt)) {
-      return activeProject;
-    }
-    return visibleProjects[0] ?? null;
-  }, [activeProject, showArchived, visibleProjects]);
-  const tiles = useMemo(
-    () => filterArchivedItems(project?.tiles ?? [], showArchived),
-    [project?.tiles, showArchived]
-  );
+  const agents = state.agents;
+  const selectedAgent = useMemo(() => getSelectedAgent(state), [state]);
+  const inspectTile = useMemo(() => {
+    if (!inspectAgentId) return null;
+    return agents.find((entry) => entry.agentId === inspectAgentId) ?? null;
+  }, [agents, inspectAgentId]);
   const faviconSeed = useMemo(() => {
-    const firstTile = project?.tiles[0];
+    const firstTile = agents[0];
     const seed = firstTile?.avatarSeed ?? firstTile?.agentId ?? "";
     return seed.trim() || null;
-  }, [project?.tiles]);
+  }, [agents]);
   const faviconHref = useMemo(
     () => (faviconSeed ? buildAvatarDataUrl(faviconSeed) : null),
     [faviconSeed]
   );
-  const workspacePath = project?.repoPath?.trim() ?? "";
-  const needsWorkspace = state.needsWorkspace || !workspacePath;
-  const inspectTile = useMemo(() => {
-    if (!inspectTileId || !project) return null;
-    return project.tiles.find((entry) => entry.id === inspectTileId) ?? null;
-  }, [inspectTileId, project]);
   const errorMessage = state.error ?? gatewayModelsError;
 
   useEffect(() => {
@@ -444,15 +432,14 @@ const AgentCanvasPage = () => {
   }, []);
 
   const updateSpecialLatestUpdate = useCallback(
-    async (projectId: string, tile: AgentTile, message: string) => {
-      const key = `${projectId}:${tile.id}`;
+    async (agentId: string, tile: AgentTile, message: string) => {
+      const key = agentId;
       const kind = resolveSpecialUpdateKind(message);
       if (!kind) {
         if (tile.latestOverride || tile.latestOverrideKind) {
           dispatch({
-            type: "updateTile",
-            projectId,
-            tileId: tile.id,
+            type: "updateAgent",
+            agentId: tile.agentId,
             patch: { latestOverride: null, latestOverrideKind: null },
           });
         }
@@ -462,18 +449,18 @@ const AgentCanvasPage = () => {
       specialUpdateInFlightRef.current.add(key);
       try {
         if (kind === "heartbeat") {
-          const agentId = tile.agentId?.trim() || parseAgentIdFromSessionKey(tile.sessionKey);
-          if (!agentId) {
+          const resolvedId =
+            tile.agentId?.trim() || parseAgentIdFromSessionKey(tile.sessionKey);
+          if (!resolvedId) {
             dispatch({
-              type: "updateTile",
-              projectId,
-              tileId: tile.id,
+              type: "updateAgent",
+              agentId: tile.agentId,
               patch: { latestOverride: null, latestOverrideKind: null },
             });
             return;
           }
           const sessions = await client.call<SessionsListResult>("sessions.list", {
-            agentId,
+            agentId: resolvedId,
             includeGlobal: false,
             includeUnknown: false,
             limit: 48,
@@ -490,9 +477,8 @@ const AgentCanvasPage = () => {
           const sessionKey = sorted[0]?.key;
           if (!sessionKey) {
             dispatch({
-              type: "updateTile",
-              projectId,
-              tileId: tile.id,
+              type: "updateAgent",
+              agentId: tile.agentId,
               patch: { latestOverride: null, latestOverrideKind: null },
             });
             return;
@@ -503,9 +489,8 @@ const AgentCanvasPage = () => {
           });
           const content = findLatestHeartbeatResponse(history.messages ?? []) ?? "";
           dispatch({
-            type: "updateTile",
-            projectId,
-            tileId: tile.id,
+            type: "updateAgent",
+            agentId: tile.agentId,
             patch: {
               latestOverride: content || null,
               latestOverrideKind: content ? "heartbeat" : null,
@@ -517,9 +502,8 @@ const AgentCanvasPage = () => {
         const job = resolveCronJobForTile(cronResult.jobs, tile);
         const content = job ? buildCronDisplay(job) : "";
         dispatch({
-          type: "updateTile",
-          projectId,
-          tileId: tile.id,
+          type: "updateAgent",
+          agentId: tile.agentId,
           patch: {
             latestOverride: content || null,
             latestOverrideKind: content ? "cron" : null,
@@ -537,22 +521,20 @@ const AgentCanvasPage = () => {
   );
 
   const refreshHeartbeatLatestUpdate = useCallback(() => {
-    const projects = stateRef.current.projects;
-    for (const project of projects) {
-      for (const tile of project.tiles) {
-        void updateSpecialLatestUpdate(project.id, tile, "heartbeat");
-      }
+    const agents = stateRef.current.agents;
+    for (const tile of agents) {
+      void updateSpecialLatestUpdate(tile.agentId, tile, "heartbeat");
     }
   }, [updateSpecialLatestUpdate]);
 
   const computeNewTilePosition = useCallback(
     (tileSize: { width: number; height: number }) => {
-      if (!project) {
+      if (agents.length === 0) {
         return { x: 80, y: 200 };
       }
 
       if (viewportSize.width === 0 || viewportSize.height === 0) {
-        const offset = project.tiles.length * 36;
+        const offset = agents.length * 36;
         return { x: 80 + offset, y: 200 + offset };
       }
 
@@ -613,7 +595,7 @@ const AgentCanvasPage = () => {
           width: effectiveSize.width,
           height: effectiveSize.height,
         };
-        return project.tiles.some((tile) =>
+        return agents.some((tile) =>
           rectsOverlap(
             rect,
             {
@@ -645,12 +627,115 @@ const AgentCanvasPage = () => {
 
       return base;
     },
-    [project, state.canvas, viewportSize]
+    [agents, state.canvas, viewportSize]
   );
+
+  const resolveAgentName = useCallback((agent: AgentsListResult["agents"][number]) => {
+    const fromList = typeof agent.name === "string" ? agent.name.trim() : "";
+    if (fromList) return fromList;
+    const fromIdentity =
+      typeof agent.identity?.name === "string" ? agent.identity.name.trim() : "";
+    if (fromIdentity) return fromIdentity;
+    return agent.id;
+  }, []);
+
+  const resolveAgentAvatarUrl = useCallback(
+    (agent: AgentsListResult["agents"][number]) => {
+      const candidate = agent.identity?.avatarUrl ?? agent.identity?.avatar ?? null;
+      if (typeof candidate !== "string") return null;
+      const trimmed = candidate.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+      if (trimmed.startsWith("data:image/")) return trimmed;
+      return null;
+    },
+    []
+  );
+
+  const loadAgents = useCallback(async () => {
+    if (status !== "connected") return;
+    setLoading(true);
+    try {
+      const [agentsResult, settingsResult] = await Promise.all([
+        client.call<AgentsListResult>("agents.list", {}),
+        fetchStudioSettings().catch((err) => {
+          logger.error("Failed to load studio settings.", err);
+          return { settings: null } as { settings: null };
+        }),
+      ]);
+      const mainKey = agentsResult.mainKey?.trim() || "main";
+      const layout =
+        settingsResult.settings && gatewayUrl
+          ? resolveGatewayLayout(settingsResult.settings, gatewayUrl)?.agents ?? null
+          : null;
+      const seeds: AgentSeed[] = agentsResult.agents.map((agent, index) => {
+        const layoutEntry = layout?.[agent.id];
+        const position = layoutEntry?.position ?? { x: 80 + index * 36, y: 200 + index * 36 };
+        const size = layoutEntry?.size ?? MIN_TILE_SIZE;
+        const avatarSeed = layoutEntry?.avatarSeed ?? agent.id;
+        const avatarUrl = resolveAgentAvatarUrl(agent);
+        const name = resolveAgentName(agent);
+        return {
+          agentId: agent.id,
+          name,
+          sessionKey: buildAgentMainSessionKey(agent.id, mainKey),
+          position,
+          size,
+          avatarSeed,
+          avatarUrl,
+        };
+      });
+      hydrateAgents(seeds);
+
+      if (gatewayUrl.trim()) {
+        const missingLayouts: Record<string, { position: { x: number; y: number }; size: { width: number; height: number }; avatarSeed?: string | null }> = {};
+        for (const seed of seeds) {
+          if (layout?.[seed.agentId]) continue;
+          missingLayouts[seed.agentId] = {
+            position: seed.position,
+            size: seed.size,
+            avatarSeed: seed.avatarSeed ?? null,
+          };
+        }
+        if (Object.keys(missingLayouts).length > 0) {
+          await updateStudioSettings({
+            layouts: {
+              [gatewayUrl.trim()]: { agents: missingLayouts },
+            },
+          });
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load agents.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    client,
+    gatewayUrl,
+    hydrateAgents,
+    resolveAgentAvatarUrl,
+    resolveAgentName,
+    setError,
+    setLoading,
+    status,
+  ]);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+    void loadAgents();
+  }, [gatewayUrl, loadAgents, status]);
+
+  useEffect(() => {
+    if (status === "disconnected") {
+      setLoading(false);
+    }
+  }, [setLoading, status]);
 
   useEffect(() => {
     const node = headerRef.current;
@@ -665,17 +750,17 @@ const AgentCanvasPage = () => {
   }, []);
 
   useEffect(() => {
-    if (!inspectTileId) return;
-    if (state.selectedTileId && state.selectedTileId !== inspectTileId) {
-      setInspectTileId(null);
+    if (!inspectAgentId) return;
+    if (state.selectedAgentId && state.selectedAgentId !== inspectAgentId) {
+      setInspectAgentId(null);
     }
-  }, [inspectTileId, state.selectedTileId]);
+  }, [inspectAgentId, state.selectedAgentId]);
 
   useEffect(() => {
-    if (inspectTileId && !inspectTile) {
-      setInspectTileId(null);
+    if (inspectAgentId && !inspectTile) {
+      setInspectAgentId(null);
     }
-  }, [inspectTileId, inspectTile]);
+  }, [inspectAgentId, inspectTile]);
 
   useEffect(() => {
     if (status !== "connected") {
@@ -735,8 +820,7 @@ const AgentCanvasPage = () => {
   }, [buildAllowedModelKeys, client, status]);
 
   const loadSummarySnapshot = useCallback(async () => {
-    const projects = stateRef.current.projects;
-    const tiles = projects.flatMap((entry) => entry.tiles);
+    const tiles = stateRef.current.agents;
     const sessionKeys = Array.from(
       new Set(
         tiles
@@ -770,37 +854,34 @@ const AgentCanvasPage = () => {
       for (const group of statusSummary.sessions?.byAgent ?? []) {
         addActivity(group.recent);
       }
-      for (const project of projects) {
-        for (const tile of project.tiles) {
-          const patch: Partial<AgentTile> = {};
-          const activity = activityByKey.get(tile.sessionKey);
-          if (typeof activity === "number") {
-            patch.lastActivityAt = activity;
+      for (const tile of tiles) {
+        const patch: Partial<AgentTile> = {};
+        const activity = activityByKey.get(tile.sessionKey);
+        if (typeof activity === "number") {
+          patch.lastActivityAt = activity;
+        }
+        const preview = previewMap.get(tile.sessionKey);
+        if (preview?.items?.length) {
+          const lastAssistant = [...preview.items]
+            .reverse()
+            .find((item) => item.role === "assistant");
+          const lastUser = [...preview.items]
+            .reverse()
+            .find((item) => item.role === "user");
+          if (lastAssistant?.text) {
+            const cleaned = stripUiMetadata(lastAssistant.text);
+            patch.latestPreview = cleaned;
           }
-          const preview = previewMap.get(tile.sessionKey);
-          if (preview?.items?.length) {
-            const lastAssistant = [...preview.items]
-              .reverse()
-              .find((item) => item.role === "assistant");
-            const lastUser = [...preview.items]
-              .reverse()
-              .find((item) => item.role === "user");
-            if (lastAssistant?.text) {
-              const cleaned = stripUiMetadata(lastAssistant.text);
-              patch.latestPreview = cleaned;
-            }
-            if (lastUser?.text) {
-              patch.lastUserMessage = stripUiMetadata(lastUser.text);
-            }
+          if (lastUser?.text) {
+            patch.lastUserMessage = stripUiMetadata(lastUser.text);
           }
-          if (Object.keys(patch).length > 0) {
-            dispatch({
-              type: "updateTile",
-              projectId: project.id,
-              tileId: tile.id,
-              patch,
-            });
-          }
+        }
+        if (Object.keys(patch).length > 0) {
+          dispatch({
+            type: "updateAgent",
+            agentId: tile.agentId,
+            patch,
+          });
         }
       }
     } catch (err) {
@@ -852,62 +933,27 @@ const AgentCanvasPage = () => {
   }, []);
 
   useEffect(() => {
-    if (showArchived) return;
-    if (activeProject && activeProject.archivedAt) {
-      const fallback = state.projects.find((entry) => !entry.archivedAt) ?? null;
-      if ((fallback?.id ?? null) !== state.activeProjectId) {
-        dispatch({ type: "setActiveProject", projectId: fallback?.id ?? null });
-      }
-    }
-  }, [activeProject, dispatch, showArchived, state.activeProjectId, state.projects]);
+    if (!state.selectedAgentId) return;
+    if (agents.some((tile) => tile.agentId === state.selectedAgentId)) return;
+    dispatch({ type: "selectAgent", agentId: null });
+  }, [agents, dispatch, state.selectedAgentId]);
 
   useEffect(() => {
-    if (!state.selectedTileId) return;
-    if (tiles.some((tile) => tile.id === state.selectedTileId)) return;
-    dispatch({ type: "selectTile", tileId: null });
-  }, [dispatch, state.selectedTileId, tiles]);
-
-  useEffect(() => {
-    for (const project of state.projects) {
-      for (const tile of project.tiles) {
-        const lastMessage = tile.lastUserMessage?.trim() ?? "";
-        const kind = resolveSpecialUpdateKind(lastMessage);
-        const key = `${project.id}:${tile.id}`;
-        const marker = kind === "heartbeat" ? `${lastMessage}:${heartbeatTick}` : lastMessage;
-        const previous = specialUpdateRef.current.get(key);
-        if (previous === marker) continue;
-        specialUpdateRef.current.set(key, marker);
-        void updateSpecialLatestUpdate(project.id, tile, lastMessage);
-      }
+    for (const tile of agents) {
+      const lastMessage = tile.lastUserMessage?.trim() ?? "";
+      const kind = resolveSpecialUpdateKind(lastMessage);
+      const key = tile.agentId;
+      const marker = kind === "heartbeat" ? `${lastMessage}:${heartbeatTick}` : lastMessage;
+      const previous = specialUpdateRef.current.get(key);
+      if (previous === marker) continue;
+      specialUpdateRef.current.set(key, marker);
+      void updateSpecialLatestUpdate(tile.agentId, tile, lastMessage);
     }
-  }, [heartbeatTick, state.projects, updateSpecialLatestUpdate]);
-
-  const handleNewAgent = useCallback(async () => {
-    if (!project || project.archivedAt) return;
-    if (needsWorkspace) {
-      setShowWorkspaceSettings(true);
-      return;
-    }
-    const name = createRandomAgentName();
-    const result = await createTile(project.id, name, "coding");
-    if (!result) return;
-
-    const nextPosition = computeNewTilePosition(result.tile.size);
-    dispatch({
-      type: "updateTile",
-      projectId: project.id,
-      tileId: result.tile.id,
-      patch: { position: nextPosition },
-    });
-    dispatch({ type: "selectTile", tileId: result.tile.id });
-  }, [computeNewTilePosition, createTile, dispatch, needsWorkspace, project]);
+  }, [agents, heartbeatTick, updateSpecialLatestUpdate]);
 
   const loadTileHistory = useCallback(
-    async (projectId: string, tileId: string) => {
-      const currentProject = stateRef.current.projects.find(
-        (entry) => entry.id === projectId
-      );
-      const tile = currentProject?.tiles.find((entry) => entry.id === tileId);
+    async (agentId: string) => {
+      const tile = stateRef.current.agents.find((entry) => entry.agentId === agentId);
       const sessionKey = tile?.sessionKey?.trim();
       if (!tile || !sessionKey) return;
       if (historyInFlightRef.current.has(sessionKey)) return;
@@ -924,9 +970,8 @@ const AgentCanvasPage = () => {
         );
         if (lines.length === 0) {
           dispatch({
-            type: "updateTile",
-            projectId,
-            tileId,
+            type: "updateAgent",
+            agentId,
             patch: { historyLoadedAt: loadedAt },
           });
           return;
@@ -945,9 +990,8 @@ const AgentCanvasPage = () => {
             patch.thinkingTrace = null;
           }
           dispatch({
-            type: "updateTile",
-            projectId,
-            tileId,
+            type: "updateAgent",
+            agentId,
             patch,
           });
           return;
@@ -966,9 +1010,8 @@ const AgentCanvasPage = () => {
           patch.thinkingTrace = null;
         }
         dispatch({
-          type: "updateTile",
-          projectId,
-          tileId,
+          type: "updateAgent",
+          agentId,
           patch,
         });
       } catch (err) {
@@ -982,17 +1025,16 @@ const AgentCanvasPage = () => {
   );
 
   const handleLoadHistory = useCallback(
-    async (tileId: string) => {
-      if (!project) return;
-      await loadTileHistory(project.id, tileId);
+    async (agentId: string) => {
+      await loadTileHistory(agentId);
     },
-    [loadTileHistory, project]
+    [loadTileHistory]
   );
 
   const handleInspectTile = useCallback(
-    (tileId: string) => {
-      setInspectTileId(tileId);
-      dispatch({ type: "selectTile", tileId });
+    (agentId: string) => {
+      setInspectAgentId(agentId);
+      dispatch({ type: "selectAgent", agentId });
     },
     [dispatch]
   );
@@ -1004,46 +1046,37 @@ const AgentCanvasPage = () => {
 
   useEffect(() => {
     if (status !== "connected") return;
-    if (!project) return;
-    for (const tile of tiles) {
+    for (const tile of agents) {
       if (!shouldAutoLoadHistory(tile)) continue;
-      void loadTileHistory(project.id, tile.id);
+      void loadTileHistory(tile.agentId);
     }
-  }, [loadTileHistory, project, shouldAutoLoadHistory, status, tiles]);
+  }, [agents, loadTileHistory, shouldAutoLoadHistory, status]);
 
   const handleSend = useCallback(
-    async (tileId: string, sessionKey: string, message: string) => {
-      if (!project) return;
-      if (needsWorkspace) {
-        window.alert("Set a workspace path before sending instructions.");
-        return;
-      }
+    async (agentId: string, sessionKey: string, message: string) => {
       const trimmed = message.trim();
       if (!trimmed) return;
       const isResetCommand = /^\/(reset|new)(\s|$)/i.test(trimmed);
       const runId = crypto.randomUUID();
-      const tile = project.tiles.find((entry) => entry.id === tileId);
+      const tile = agents.find((entry) => entry.agentId === agentId);
       if (!tile) {
         dispatch({
           type: "appendOutput",
-          projectId: project.id,
-          tileId,
+          agentId,
           line: "Error: Tile not found.",
         });
         return;
       }
       if (isResetCommand) {
         dispatch({
-          type: "updateTile",
-          projectId: project.id,
-          tileId,
+          type: "updateAgent",
+          agentId,
           patch: { outputLines: [], streamText: null, thinkingTrace: null, lastResult: null },
         });
       }
       dispatch({
-        type: "updateTile",
-        projectId: project.id,
-        tileId,
+        type: "updateAgent",
+        agentId,
         patch: {
           status: "running",
           runId,
@@ -1056,8 +1089,7 @@ const AgentCanvasPage = () => {
       });
       dispatch({
         type: "appendOutput",
-        projectId: project.id,
-        tileId,
+        agentId,
         line: `> ${trimmed}`,
       });
       try {
@@ -1071,47 +1103,39 @@ const AgentCanvasPage = () => {
             thinkingLevel: tile.thinkingLevel ?? null,
           });
           dispatch({
-            type: "updateTile",
-            projectId: project.id,
-            tileId,
+            type: "updateAgent",
+            agentId,
             patch: { sessionSettingsSynced: true },
           });
         }
         await client.call("chat.send", {
           sessionKey,
-          message: buildAgentInstruction({
-            workspacePath: tile.workspacePath,
-            message: trimmed,
-          }),
+          message: buildAgentInstruction({ message: trimmed }),
           deliver: false,
           idempotencyKey: runId,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Gateway error";
         dispatch({
-          type: "updateTile",
-          projectId: project.id,
-          tileId,
+          type: "updateAgent",
+          agentId,
           patch: { status: "error", runId: null, streamText: null, thinkingTrace: null },
         });
         dispatch({
           type: "appendOutput",
-          projectId: project.id,
-          tileId,
+          agentId,
           line: `Error: ${msg}`,
         });
       }
     },
-    [client, dispatch, needsWorkspace, project]
+    [agents, client, dispatch]
   );
 
   const handleModelChange = useCallback(
-    async (tileId: string, sessionKey: string, value: string | null) => {
-      if (!project) return;
+    async (agentId: string, sessionKey: string, value: string | null) => {
       dispatch({
-        type: "updateTile",
-        projectId: project.id,
-        tileId,
+        type: "updateAgent",
+        agentId,
         patch: { model: value, sessionSettingsSynced: false },
       });
       try {
@@ -1120,31 +1144,27 @@ const AgentCanvasPage = () => {
           model: value ?? null,
         });
         dispatch({
-          type: "updateTile",
-          projectId: project.id,
-          tileId,
+          type: "updateAgent",
+          agentId,
           patch: { sessionSettingsSynced: true },
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to set model.";
         dispatch({
           type: "appendOutput",
-          projectId: project.id,
-          tileId,
+          agentId,
           line: `Model update failed: ${msg}`,
         });
       }
     },
-    [client, dispatch, project]
+    [client, dispatch]
   );
 
   const handleThinkingChange = useCallback(
-    async (tileId: string, sessionKey: string, value: string | null) => {
-      if (!project) return;
+    async (agentId: string, sessionKey: string, value: string | null) => {
       dispatch({
-        type: "updateTile",
-        projectId: project.id,
-        tileId,
+        type: "updateAgent",
+        agentId,
         patch: { thinkingLevel: value, sessionSettingsSynced: false },
       });
       try {
@@ -1153,22 +1173,20 @@ const AgentCanvasPage = () => {
           thinkingLevel: value ?? null,
         });
         dispatch({
-          type: "updateTile",
-          projectId: project.id,
-          tileId,
+          type: "updateAgent",
+          agentId,
           patch: { sessionSettingsSynced: true },
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to set thinking level.";
         dispatch({
           type: "appendOutput",
-          projectId: project.id,
-          tileId,
+          agentId,
           line: `Thinking update failed: ${msg}`,
         });
       }
     },
-    [client, dispatch, project]
+    [client, dispatch]
   );
 
   useEffect(() => {
@@ -1179,17 +1197,14 @@ const AgentCanvasPage = () => {
       if (payload.runId) {
         chatRunSeenRef.current.add(payload.runId);
       }
-      const match = findTileBySessionKey(state.projects, payload.sessionKey);
-      if (!match) return;
-
-      const project = state.projects.find((entry) => entry.id === match.projectId);
-      const tile = project?.tiles.find((entry) => entry.id === match.tileId);
+      const agentId = findAgentBySessionKey(state.agents, payload.sessionKey);
+      if (!agentId) return;
+      const tile = state.agents.find((entry) => entry.agentId === agentId);
       const summaryPatch = getChatSummaryPatch(payload);
       if (summaryPatch) {
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId,
           patch: summaryPatch,
         });
       }
@@ -1211,23 +1226,20 @@ const AgentCanvasPage = () => {
         }
         if (nextThinking) {
           dispatch({
-            type: "updateTile",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            type: "updateAgent",
+            agentId,
             patch: { thinkingTrace: nextThinking, status: "running" },
           });
         }
         if (typeof nextText === "string") {
           dispatch({
             type: "setStream",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            agentId,
             value: nextText,
           });
           dispatch({
-            type: "updateTile",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            type: "updateAgent",
+            agentId,
             patch: { status: "running" },
           });
         }
@@ -1254,8 +1266,7 @@ const AgentCanvasPage = () => {
         if (thinkingLine) {
           dispatch({
             type: "appendOutput",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            agentId,
             line: thinkingLine,
           });
         }
@@ -1263,8 +1274,7 @@ const AgentCanvasPage = () => {
           for (const line of toolLines) {
             dispatch({
               type: "appendOutput",
-              projectId: match.projectId,
-              tileId: match.tileId,
+              agentId,
               line,
             });
           }
@@ -1275,29 +1285,26 @@ const AgentCanvasPage = () => {
           tile &&
           !tile.outputLines.some((line) => isTraceMarkdown(line.trim()))
         ) {
-          void loadTileHistory(match.projectId, match.tileId);
+          void loadTileHistory(agentId);
         }
         if (!isToolRole && typeof nextText === "string") {
           dispatch({
             type: "appendOutput",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            agentId,
             line: nextText,
           });
           dispatch({
-            type: "updateTile",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            type: "updateAgent",
+            agentId,
             patch: { lastResult: nextText },
           });
         }
         if (tile?.lastUserMessage && !tile.latestOverride) {
-          void updateSpecialLatestUpdate(match.projectId, tile, tile.lastUserMessage);
+          void updateSpecialLatestUpdate(agentId, tile, tile.lastUserMessage);
         }
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId,
           patch: { streamText: null, thinkingTrace: null },
         });
         return;
@@ -1309,14 +1316,12 @@ const AgentCanvasPage = () => {
         }
         dispatch({
           type: "appendOutput",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          agentId,
           line: "Run aborted.",
         });
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId,
           patch: { streamText: null, thinkingTrace: null },
         });
         return;
@@ -1328,14 +1333,12 @@ const AgentCanvasPage = () => {
         }
         dispatch({
           type: "appendOutput",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          agentId,
           line: payload.errorMessage ? `Error: ${payload.errorMessage}` : "Run error.",
         });
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId,
           patch: { streamText: null, thinkingTrace: null },
         });
       }
@@ -1344,7 +1347,7 @@ const AgentCanvasPage = () => {
     client,
     dispatch,
     loadTileHistory,
-    state.projects,
+    state.agents,
     summarizeThinkingMessage,
     updateSpecialLatestUpdate,
   ]);
@@ -1355,12 +1358,11 @@ const AgentCanvasPage = () => {
       const payload = event.payload as AgentEventPayload | undefined;
       if (!payload?.runId) return;
       const directMatch = payload.sessionKey
-        ? findTileBySessionKey(state.projects, payload.sessionKey)
+        ? findAgentBySessionKey(state.agents, payload.sessionKey)
         : null;
-      const match = directMatch ?? findTileByRunId(state.projects, payload.runId);
+      const match = directMatch ?? findAgentByRunId(state.agents, payload.runId);
       if (!match) return;
-      const project = state.projects.find((entry) => entry.id === match.projectId);
-      const tile = project?.tiles.find((entry) => entry.id === match.tileId);
+      const tile = state.agents.find((entry) => entry.agentId === match);
       if (!tile) return;
       const stream = typeof payload.stream === "string" ? payload.stream : "";
       const data =
@@ -1378,14 +1380,12 @@ const AgentCanvasPage = () => {
         if (!cleaned) return;
         dispatch({
           type: "setStream",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          agentId: match,
           value: cleaned,
         });
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId: match,
           patch: { status: "running", runId: payload.runId, lastActivityAt: Date.now() },
         });
         return;
@@ -1420,8 +1420,7 @@ const AgentCanvasPage = () => {
         for (const line of extractToolLines(message)) {
           dispatch({
             type: "appendOutput",
-            projectId: match.projectId,
-            tileId: match.tileId,
+            agentId: match,
             line,
           });
         }
@@ -1433,9 +1432,8 @@ const AgentCanvasPage = () => {
       const phase = typeof data?.phase === "string" ? data.phase : "";
       if (phase === "start") {
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId: match,
           patch: {
             status: "running",
             runId: payload.runId,
@@ -1451,23 +1449,20 @@ const AgentCanvasPage = () => {
           if (finalText) {
             dispatch({
               type: "appendOutput",
-              projectId: match.projectId,
-              tileId: match.tileId,
+              agentId: match,
               line: finalText,
             });
             dispatch({
-              type: "updateTile",
-              projectId: match.projectId,
-              tileId: match.tileId,
+              type: "updateAgent",
+              agentId: match,
               patch: { lastResult: finalText },
             });
           }
         }
         chatRunSeenRef.current.delete(payload.runId);
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId: match,
           patch: {
             status: "idle",
             runId: null,
@@ -1482,9 +1477,8 @@ const AgentCanvasPage = () => {
         if (tile.runId && tile.runId !== payload.runId) return;
         chatRunSeenRef.current.delete(payload.runId);
         dispatch({
-          type: "updateTile",
-          projectId: match.projectId,
-          tileId: match.tileId,
+          type: "updateAgent",
+          agentId: match,
           patch: {
             status: "error",
             runId: null,
@@ -1495,190 +1489,149 @@ const AgentCanvasPage = () => {
         });
       }
     });
-  }, [client, dispatch, state.projects]);
+  }, [client, dispatch, state.agents]);
 
   // Zoom controls are available in the bottom-right of the canvas.
 
-  const handleOpenWorkspaceSettings = useCallback(() => {
-    setShowWorkspaceSettings(true);
-  }, []);
-
-  const handleWorkspaceSettingsSaved = useCallback(async () => {
-    setShowWorkspaceSettings(false);
-    await refreshStore();
-  }, [refreshStore]);
-
-  const handleCleanupArchived = useCallback(async () => {
-    try {
-      const preview = await fetchProjectCleanupPreview();
-      if (preview.items.length === 0) {
-        window.alert("No archived agents to clean.");
-        return;
+  const persistAgentLayout = useCallback(
+    async (
+      agentId: string,
+      layout: {
+        position: { x: number; y: number };
+        size: { width: number; height: number };
+        avatarSeed?: string | null;
       }
-      const confirmation = window.confirm(
-        `Remove ${preview.items.length} archived agents?`
-      );
-      if (!confirmation) return;
-      const result = await runProjectCleanup({
-        tileIds: preview.items.map((item) => item.tileId),
-      });
-      dispatch({ type: "loadStore", store: result.store });
-      if (result.warnings.length) {
-        window.alert(result.warnings.join("\n"));
-      }
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to clean archived agents.";
-      window.alert(message);
-    }
-  }, [dispatch]);
-
-  const handleCreateDiscordChannel = useCallback(async () => {
-    if (!project || project.archivedAt) return;
-    if (needsWorkspace) {
-      window.alert("Set a workspace path first.");
-      return;
-    }
-    if (!state.selectedTileId) {
-      window.alert("Select an agent tile first.");
-      return;
-    }
-    const tile = project.tiles.find((entry) => entry.id === state.selectedTileId);
-    if (!tile) {
-      window.alert("Selected agent not found.");
-      return;
-    }
-    try {
-      const result = await createProjectDiscordChannel(project.id, {
-        agentId: tile.agentId,
-        agentName: tile.name,
-      });
-      const notice = `Created Discord channel #${result.channelName} for ${tile.name}.`;
-      if (result.warnings.length) {
-        window.alert(`${notice}\n${result.warnings.join("\n")}`);
-      } else {
-        window.alert(notice);
-      }
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to create Discord channel.";
-      window.alert(message);
-    }
-  }, [needsWorkspace, project, state.selectedTileId]);
-
-  const handleTileDelete = useCallback(
-    async (tileId: string) => {
-      if (!project) return;
-      const tile = project.tiles.find((entry) => entry.id === tileId);
-      if (!tile) return;
-      const result = tile.archivedAt
-        ? await restoreTile(project.id, tileId)
-        : await deleteTile(project.id, tileId);
-      if (!tile.archivedAt && inspectTileId === tileId) {
-        setInspectTileId(null);
-      }
-      if (result?.warnings.length) {
-        window.alert(result.warnings.join("\n"));
+    ) => {
+      if (!gatewayUrl.trim()) return;
+      try {
+        await updateStudioSettings({
+          layouts: {
+            [gatewayUrl.trim()]: { agents: { [agentId]: layout } },
+          },
+        });
+      } catch (err) {
+        logger.error("Failed to save agent layout.", err);
       }
     },
-    [deleteTile, inspectTileId, project, restoreTile]
+    [gatewayUrl]
+  );
+
+  const handleRenameAgent = useCallback(
+    async (agentId: string, name: string) => {
+      const tile = agents.find((entry) => entry.agentId === agentId);
+      if (!tile) return false;
+      try {
+        await renameGatewayAgent({
+          client,
+          agentId,
+          name,
+          sessionKey: tile.sessionKey,
+        });
+        dispatch({
+          type: "updateAgent",
+          agentId,
+          patch: { name },
+        });
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to rename agent.";
+        setError(message);
+        return false;
+      }
+    },
+    [agents, client, dispatch, setError]
   );
 
   const handleAvatarShuffle = useCallback(
-    async (tileId: string) => {
-      if (!project) return;
+    async (agentId: string) => {
+      const tile = agents.find((entry) => entry.agentId === agentId);
+      if (!tile) return;
       const avatarSeed = crypto.randomUUID();
-      const result = await updateTile(project.id, tileId, { avatarSeed });
-      if (!result) return;
-      if ("error" in result) {
-        window.alert(result.error);
-        return;
-      }
-      if (result.warnings.length > 0) {
-        window.alert(result.warnings.join("\n"));
-      }
+      dispatch({
+        type: "updateAgent",
+        agentId,
+        patch: { avatarSeed },
+      });
+      await persistAgentLayout(agentId, {
+        position: tile.position,
+        size: tile.size,
+        avatarSeed,
+      });
     },
-    [project, updateTile]
+    [agents, dispatch, persistAgentLayout]
   );
 
   const handleNameShuffle = useCallback(
-    async (tileId: string) => {
-      if (!project) return;
-      const name = createRandomAgentName();
-      const result = await renameTile(project.id, tileId, normalizeAgentName(name));
-      if (!result) return;
-      if ("error" in result) {
-        window.alert(result.error);
-        return;
-      }
-      if (result.warnings.length > 0) {
-        window.alert(result.warnings.join("\n"));
-      }
+    async (agentId: string) => {
+      const name = normalizeAgentName(createRandomAgentName());
+      if (!name) return;
+      await handleRenameAgent(agentId, name);
     },
-    [project, renameTile]
+    [handleRenameAgent]
   );
+
+  const handleMoveTile = useCallback(
+    (agentId: string, position: { x: number; y: number }) => {
+      const tile = agents.find((entry) => entry.agentId === agentId);
+      if (!tile) return;
+      dispatch({
+        type: "updateAgent",
+        agentId,
+        patch: { position },
+      });
+      void persistAgentLayout(agentId, {
+        position,
+        size: tile.size,
+        avatarSeed: tile.avatarSeed ?? null,
+      });
+    },
+    [agents, dispatch, persistAgentLayout]
+  );
+
+  const handleResizeTile = useCallback(
+    (agentId: string, size: { width: number; height: number }) => {
+      const tile = agents.find((entry) => entry.agentId === agentId);
+      if (!tile) return;
+      dispatch({
+        type: "updateAgent",
+        agentId,
+        patch: { size },
+      });
+      void persistAgentLayout(agentId, {
+        position: tile.position,
+        size,
+        avatarSeed: tile.avatarSeed ?? null,
+      });
+    },
+    [agents, dispatch, persistAgentLayout]
+  );
+
+  const handleDraftChange = useCallback(
+    (agentId: string, value: string) => {
+      dispatch({
+        type: "updateAgent",
+        agentId,
+        patch: { draft: value },
+      });
+    },
+    [dispatch]
+  );
+
+  const connectionPanelVisible = showConnectionPanel || status !== "connected";
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">
       <CanvasFlow
-        tiles={tiles}
+        tiles={agents}
         transform={state.canvas}
         viewportRef={viewportRef}
-        selectedTileId={state.selectedTileId}
+        selectedTileId={state.selectedAgentId}
         canSend={status === "connected"}
-        onSelectTile={(id) => dispatch({ type: "selectTile", tileId: id })}
-        onMoveTile={(id, position) =>
-          project
-            ? dispatch({
-                type: "updateTile",
-                projectId: project.id,
-                tileId: id,
-                patch: { position },
-              })
-            : null
-        }
-        onResizeTile={(id, size) =>
-          project
-            ? dispatch({
-                type: "updateTile",
-                projectId: project.id,
-                tileId: id,
-                patch: {
-                  size: {
-                    height: Math.min(
-                      MAX_TILE_HEIGHT,
-                      Math.max(size.height, MIN_TILE_SIZE.height)
-                    ),
-                    width: Math.max(size.width, MIN_TILE_SIZE.width),
-                  },
-                },
-              })
-            : null
-        }
-        onRenameTile={(id, name) => {
-          if (!project) return Promise.resolve(false);
-          return renameTile(project.id, id, name).then((result) => {
-            if (!result) return false;
-            if ("error" in result) {
-              window.alert(result.error);
-              return false;
-            }
-            if (result.warnings.length > 0) {
-              window.alert(result.warnings.join("\n"));
-            }
-            return true;
-          });
-        }}
-        onDraftChange={(id, value) =>
-          project
-            ? dispatch({
-                type: "updateTile",
-                projectId: project.id,
-                tileId: id,
-                patch: { draft: value },
-              })
-            : null
-        }
+        onSelectTile={(id) => dispatch({ type: "selectAgent", agentId: id })}
+        onMoveTile={handleMoveTile}
+        onResizeTile={handleResizeTile}
+        onRenameTile={handleRenameAgent}
+        onDraftChange={handleDraftChange}
         onSend={handleSend}
         onAvatarShuffle={handleAvatarShuffle}
         onNameShuffle={handleNameShuffle}
@@ -1686,7 +1639,7 @@ const AgentCanvasPage = () => {
         onUpdateTransform={(patch) => dispatch({ type: "setCanvas", patch })}
       />
 
-      {inspectTile && project ? (
+      {inspectTile ? (
         <div
           style={
             {
@@ -1695,58 +1648,54 @@ const AgentCanvasPage = () => {
           }
         >
           <AgentInspectPanel
-            key={inspectTile.id}
+            key={inspectTile.agentId}
             tile={inspectTile}
-            projectId={project.id}
+            client={client}
             models={gatewayModels}
-            onClose={() => setInspectTileId(null)}
-            onLoadHistory={() => handleLoadHistory(inspectTile.id)}
+            onClose={() => setInspectAgentId(null)}
+            onLoadHistory={() => handleLoadHistory(inspectTile.agentId)}
             onModelChange={(value) =>
-              handleModelChange(inspectTile.id, inspectTile.sessionKey, value)
+              handleModelChange(inspectTile.agentId, inspectTile.sessionKey, value)
             }
             onThinkingChange={(value) =>
-              handleThinkingChange(inspectTile.id, inspectTile.sessionKey, value)
+              handleThinkingChange(inspectTile.agentId, inspectTile.sessionKey, value)
             }
-            onDelete={() => handleTileDelete(inspectTile.id)}
           />
         </div>
       ) : null}
 
       <div className="pointer-events-none absolute inset-0 z-10 flex flex-col gap-4 p-6">
         <div ref={headerRef} className="pointer-events-auto mx-auto w-full max-w-4xl">
-            <HeaderBar
-            workspaceLabel={project?.name?.trim() ? project.name : "Workspace"}
-            workspacePath={workspacePath || null}
-            hasArchivedTiles={hasArchivedTiles}
+          <HeaderBar
             status={status}
-            showArchived={showArchived}
-            onToggleArchived={() => setShowArchived((prev) => !prev)}
-            onNewAgent={handleNewAgent}
-            canCreateAgent={Boolean(project && !project.archivedAt && !needsWorkspace)}
-            onWorkspaceSettings={handleOpenWorkspaceSettings}
-            onCreateDiscordChannel={handleCreateDiscordChannel}
-            canCreateDiscordChannel={Boolean(
-              project && tiles.length > 0 && !project.archivedAt && !needsWorkspace
-            )}
-            onCleanupArchived={handleCleanupArchived}
-            canCleanupArchived={hasArchivedTiles}
+            gatewayUrl={gatewayUrl}
+            agentCount={agents.length}
+            onConnectionSettings={() => setShowConnectionPanel((prev) => !prev)}
           />
         </div>
 
         {state.loading ? (
           <div className="pointer-events-auto mx-auto w-full max-w-4xl">
             <div className="glass-panel px-6 py-6 text-muted-foreground">
-              Loading workspace…
+              Loading agents…
             </div>
           </div>
         ) : null}
 
-        {showWorkspaceSettings ? (
-          <div className="pointer-events-auto mx-auto w-full max-w-5xl">
-            <WorkspaceSettingsPanel
-              onClose={() => setShowWorkspaceSettings(false)}
-              onSaved={handleWorkspaceSettingsSaved}
-            />
+        {connectionPanelVisible ? (
+          <div className="pointer-events-auto mx-auto w-full max-w-4xl">
+            <div className="glass-panel px-6 py-6">
+              <ConnectionPanel
+                gatewayUrl={gatewayUrl}
+                token={token}
+                status={status}
+                error={gatewayError}
+                onGatewayUrlChange={setGatewayUrl}
+                onTokenChange={setToken}
+                onConnect={() => void connect()}
+                onDisconnect={disconnect}
+              />
+            </div>
           </div>
         ) : null}
 

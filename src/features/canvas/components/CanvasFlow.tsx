@@ -119,7 +119,7 @@ const CanvasFlowInner = ({
   const nodesFromTiles = useMemo<TileNode[]>(
     () =>
       tiles.map((tile) => ({
-        id: tile.id,
+        id: tile.agentId,
         type: "agentTile",
         position: tile.position,
         width: tile.size.width,
@@ -128,17 +128,17 @@ const CanvasFlowInner = ({
         data: {
           tile,
           canSend,
-          onResize: (size) => updateNodeSize(tile.id, size),
-          onResizeEnd: (size) => commitNodeSize(tile.id, size),
-          onNameChange: (name) => handlersRef.current.onRenameTile(tile.id, name),
-          onDraftChange: (value) => handlersRef.current.onDraftChange(tile.id, value),
+          onResize: (size) => updateNodeSize(tile.agentId, size),
+          onResizeEnd: (size) => commitNodeSize(tile.agentId, size),
+          onNameChange: (name) => handlersRef.current.onRenameTile(tile.agentId, name),
+          onDraftChange: (value) => handlersRef.current.onDraftChange(tile.agentId, value),
           onSend: (message) =>
-            handlersRef.current.onSend(tile.id, tile.sessionKey, message),
-          onAvatarShuffle: () => handlersRef.current.onAvatarShuffle(tile.id),
-          onNameShuffle: () => handlersRef.current.onNameShuffle(tile.id),
+            handlersRef.current.onSend(tile.agentId, tile.sessionKey, message),
+          onAvatarShuffle: () => handlersRef.current.onAvatarShuffle(tile.agentId),
+          onNameShuffle: () => handlersRef.current.onNameShuffle(tile.agentId),
           onInspect: () => {
             ignoreNextSelectionClearRef.current = true;
-            handlersRef.current.onInspectTile(tile.id);
+            handlersRef.current.onInspectTile(tile.agentId);
           },
         },
       })),

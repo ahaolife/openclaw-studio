@@ -11,18 +11,15 @@ import {
 } from "@/lib/clawdbot/resolveDefaultAgent";
 
 describe("buildAgentInstruction", () => {
-  it("includes workspace path in instruction", () => {
+  it("returns trimmed message for normal prompts", () => {
     const message = buildAgentInstruction({
-      workspacePath: "/tmp/workspace",
-      message: "Ship it",
+      message: " Ship it ",
     });
-    expect(message).toContain("Workspace path: /tmp/workspace");
-    expect(message).toContain("Ship it");
+    expect(message).toBe("Ship it");
   });
 
   it("returns command messages untouched", () => {
     const message = buildAgentInstruction({
-      workspacePath: "/tmp/workspace",
       message: "/help",
     });
     expect(message).toBe("/help");

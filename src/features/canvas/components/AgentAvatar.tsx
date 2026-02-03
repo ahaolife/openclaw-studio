@@ -6,6 +6,7 @@ import { buildAvatarDataUrl } from "@/lib/avatars/multiavatar";
 type AgentAvatarProps = {
   seed: string;
   name: string;
+  avatarUrl?: string | null;
   size?: number;
   isSelected?: boolean;
 };
@@ -13,10 +14,15 @@ type AgentAvatarProps = {
 export const AgentAvatar = ({
   seed,
   name,
+  avatarUrl,
   size = 112,
   isSelected = false,
 }: AgentAvatarProps) => {
-  const src = useMemo(() => buildAvatarDataUrl(seed), [seed]);
+  const src = useMemo(() => {
+    const trimmed = avatarUrl?.trim();
+    if (trimmed) return trimmed;
+    return buildAvatarDataUrl(seed);
+  }, [avatarUrl, seed]);
 
   return (
     <div

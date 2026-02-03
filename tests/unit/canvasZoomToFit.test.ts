@@ -5,18 +5,20 @@ import type { AgentTile } from "@/features/canvas/state/store";
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 
-const makeTile = (id: string, position: { x: number; y: number }, size: { width: number; height: number }): AgentTile => ({
-  id,
+const makeTile = (
+  id: string,
+  position: { x: number; y: number },
+  size: { width: number; height: number }
+): AgentTile => ({
+  agentId: `agent-${id}`,
   name: `Tile ${id}`,
-  agentId: "main",
-  role: "coding",
-  sessionKey: `agent:main:studio:${id}`,
-  model: null,
-  thinkingLevel: "low",
-  workspacePath: "/tmp/workspace",
-  archivedAt: null,
+  sessionKey: `agent:agent-${id}:main`,
   position,
   size,
+  avatarSeed: `agent-${id}`,
+  avatarUrl: null,
+  model: null,
+  thinkingLevel: "low",
   status: "idle",
   outputLines: [],
   lastResult: null,

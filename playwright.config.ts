@@ -5,7 +5,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:3000",
   },
   webServer: {
-    command: "npm run dev",
+    command: "NEXT_PUBLIC_GATEWAY_URL= npm run dev",
     port: 3000,
     reuseExistingServer: !process.env.CI,
   },

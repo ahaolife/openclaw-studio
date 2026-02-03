@@ -6,9 +6,6 @@ import { extractSummaryText } from "@/lib/text/summary";
 import { normalizeAgentName } from "@/lib/names/agentNames";
 import { Shuffle } from "lucide-react";
 import { MAX_TILE_HEIGHT, MIN_TILE_SIZE } from "@/lib/canvasTileDefaults";
-import { MentionsInput, Mention, makeTriggerRegex } from "react-mentions-ts";
-import { fetchPathSuggestions } from "@/lib/projects/client";
-import { logger } from "@/lib/logger";
 import { AgentAvatar } from "./AgentAvatar";
 
 type AgentTileProps = {
@@ -39,7 +36,7 @@ export const AgentTile = ({
   onResizeEnd,
 }: AgentTileProps) => {
   const [nameDraft, setNameDraft] = useState(tile.name);
-  const [mentionsValue, setMentionsValue] = useState(tile.draft);
+  const [draftValue, setDraftValue] = useState(tile.draft);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
   const plainDraftRef = useRef(tile.draft);
   const resizeStateRef = useRef<{
@@ -81,7 +78,7 @@ export const AgentTile = ({
     if (tile.draft === plainDraftRef.current) return;
     plainDraftRef.current = tile.draft;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMentionsValue(tile.draft);
+    setDraftValue(tile.draft);
   }, [tile.draft]);
 
   useEffect(() => {
@@ -114,24 +111,6 @@ export const AgentTile = ({
       onResizeEnd(resizeSizeRef.current);
     }
   }, [onResizeEnd]);
-
-  const loadPathSuggestions = useCallback(
-    async (query: string) => {
-      try {
-        const result = await fetchPathSuggestions(query);
-        return result.entries.map((entry) => ({
-          id: entry.displayPath,
-          display: entry.displayPath,
-        }));
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to load path suggestions.";
-        logger.error(message);
-        return [];
-      }
-    },
-    []
-  );
 
   const scheduleResize = useCallback(
     (size: Partial<TileSize>) => {
@@ -324,13 +303,14 @@ export const AgentTile = ({
             </div>
             <div className="relative">
               <div data-drag-handle>
-                <AgentAvatar
-                  seed={avatarSeed}
-                  name={tile.name}
-                  size={120}
-                  isSelected={isSelected}
-                />
-              </div>
+              <AgentAvatar
+                seed={avatarSeed}
+                name={tile.name}
+                avatarUrl={tile.avatarUrl ?? null}
+                size={120}
+                isSelected={isSelected}
+              />
+            </div>
               <button
                 className="nodrag absolute -bottom-2 -right-2 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-muted-foreground shadow-sm hover:bg-card"
                 type="button"
@@ -371,31 +351,16 @@ export const AgentTile = ({
               Inspect
             </button>
           </div>
-          <MentionsInput
-            inputRef={handleDraftRef}
+          <textarea
+            ref={handleDraftRef}
             rows={1}
-            value={mentionsValue}
-            className="flex-1 rounded-lg"
-            classNames={{
-              control: "rounded-lg border border-border bg-card",
-              highlighter:
-                "max-h-28 w-full overflow-hidden px-3 py-2 text-[11px] text-foreground",
-              input:
-                "max-h-28 w-full resize-none overflow-hidden bg-transparent px-3 py-2 text-[11px] text-foreground outline-none",
-              suggestions:
-                "z-10 mt-1 rounded-lg border border-border bg-popover p-1 text-[11px] shadow-md",
-              suggestionsList: "max-h-48 overflow-auto",
-              suggestionItem:
-                "flex cursor-pointer items-center rounded-md px-2 py-1 text-foreground",
-              suggestionItemFocused: "bg-muted",
-              suggestionDisplay: "text-foreground",
-              suggestionHighlight: "font-semibold text-primary",
-            }}
-            onMentionsChange={({ value, plainTextValue }) => {
-              const plainValue = plainTextValue ?? value;
-              plainDraftRef.current = plainValue;
-              setMentionsValue(value);
-              onDraftChange(plainValue);
+            value={draftValue}
+            className="flex-1 resize-none rounded-lg border border-border bg-card px-3 py-2 text-[11px] text-foreground outline-none"
+            onChange={(event) => {
+              const value = event.target.value;
+              plainDraftRef.current = value;
+              setDraftValue(value);
+              onDraftChange(value);
               resizeDraft();
             }}
             onKeyDown={(event) => {
@@ -403,24 +368,17 @@ export const AgentTile = ({
               if (event.defaultPrevented) return;
               event.preventDefault();
               if (!canSend || tile.status === "running") return;
-              const message = tile.draft.trim();
+              const message = draftValue.trim();
               if (!message) return;
               onSend(message);
             }}
             placeholder="type a message"
-          >
-            <Mention
-              trigger={makeTriggerRegex("@", { allowSpaceInQuery: true })}
-              data={loadPathSuggestions}
-              displayTransform={(_id, display) => `@${display}`}
-              className="bg-blue-500/20"
-            />
-          </MentionsInput>
+          />
           <button
             className="rounded-lg border border-transparent bg-primary px-3 py-2 text-[11px] font-semibold text-primary-foreground shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
             type="button"
-            onClick={() => onSend(tile.draft)}
-            disabled={!canSend || tile.status === "running" || !tile.draft.trim()}
+            onClick={() => onSend(draftValue)}
+            disabled={!canSend || tile.status === "running" || !draftValue.trim()}
           >
             Send
           </button>

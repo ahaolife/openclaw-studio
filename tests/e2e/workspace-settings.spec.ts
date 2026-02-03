@@ -1,75 +1,23 @@
 import { expect, test } from "@playwright/test";
 
-import path from "node:path";
+test("connection settings persist to the studio settings API", async ({ page }) => {
+  let lastPayload: Record<string, unknown> | null = null;
 
-import type { ProjectsStore, WorkspaceSettingsResult } from "@/lib/projects/types";
-
-test("workspace settings flow updates the header label", async ({ page }) => {
-  let projectsStore: ProjectsStore = {
-    version: 3,
-    activeProjectId: null,
-    projects: [],
-  };
-  let workspaceSettings: WorkspaceSettingsResult = {
-    workspacePath: "/Users/default",
-    workspaceName: "Workspace",
-    defaultAgentId: "main",
-    warnings: [],
-  };
-
-  await page.route("**/api/projects", async (route, request) => {
-    if (request.method() !== "GET" && request.method() !== "PUT") {
-      await route.fallback();
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(projectsStore),
-    });
-  });
-
-  await page.route("**/api/workspace", async (route, request) => {
+  await page.route("**/api/studio", async (route, request) => {
     if (request.method() === "GET") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(workspaceSettings),
+        body: JSON.stringify({ settings: { version: 1, gateway: null, layouts: {} } }),
       });
       return;
     }
     if (request.method() === "PUT") {
-      const body = JSON.parse(request.postData() ?? "{}") as {
-        workspacePath?: string;
-        workspaceName?: string;
-      };
-      const workspacePath = body.workspacePath ?? "";
-      const workspaceName = body.workspaceName ?? path.basename(workspacePath);
-      workspaceSettings = {
-        workspacePath,
-        workspaceName,
-        defaultAgentId: "main",
-        warnings: [],
-      };
-      projectsStore = {
-        version: 3,
-        activeProjectId: "project-1",
-        projects: [
-          {
-            id: "project-1",
-            name: workspaceName,
-            repoPath: workspacePath,
-            createdAt: 1,
-            updatedAt: 1,
-            archivedAt: null,
-            tiles: [],
-          },
-        ],
-      };
+      lastPayload = JSON.parse(request.postData() ?? "{}") as Record<string, unknown>;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(workspaceSettings),
+        body: JSON.stringify({ settings: { version: 1, gateway: lastPayload.gateway, layouts: {} } }),
       });
       return;
     }
@@ -78,13 +26,14 @@ test("workspace settings flow updates the header label", async ({ page }) => {
 
   await page.goto("/");
 
-  await page.getByTestId("workspace-settings-toggle").click();
-  await expect(page.getByTestId("workspace-settings-panel")).toBeVisible();
+  await page.getByLabel("Gateway URL").fill("ws://gateway.example:18789");
+  await page.getByLabel("Token").fill("token-123");
 
-  await page.getByTestId("workspace-settings-path").fill("/Users/Demo Workspace");
-  await page.getByTestId("workspace-settings-save").click();
+  await page.waitForRequest((req) => req.url().includes("/api/studio") && req.method() === "PUT");
 
-  await expect(page.getByTestId("workspace-settings-panel")).toHaveCount(0);
-  const workspaceBlock = page.getByText("Default workspace").locator("..");
-  await expect(workspaceBlock.locator("p").nth(1)).toHaveText("Demo Workspace");
+  expect(lastPayload).not.toBeNull();
+  const gateway = (lastPayload?.gateway ?? {}) as { url?: string; token?: string };
+  expect(gateway.url).toBe("ws://gateway.example:18789");
+  expect(gateway.token).toBe("token-123");
+  await expect(page.getByRole("button", { name: "Connect" })).toBeEnabled();
 });

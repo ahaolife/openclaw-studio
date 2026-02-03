@@ -124,7 +124,8 @@ export const mergeStudioSettings = (
   if (patch.layouts) {
     const normalizedLayouts = normalizeLayouts(patch.layouts);
     for (const [key, value] of Object.entries(normalizedLayouts)) {
-      nextLayouts[key] = value;
+      const existing = nextLayouts[key]?.agents ?? {};
+      nextLayouts[key] = { agents: { ...existing, ...value.agents } };
     }
   }
   return {
