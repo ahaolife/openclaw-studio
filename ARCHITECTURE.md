@@ -33,11 +33,11 @@ This keeps feature cohesion high while preserving a clear client/server boundary
 - **Gateway** (`src/lib/gateway`): WebSocket client for agent runtime (frames, connect, request/response). Session settings sync transport (`sessions.patch`) is centralized in `src/lib/gateway/sessionSettings.ts`. The OpenClaw control UI client is vendored in `src/lib/gateway/openclaw/GatewayBrowserClient.ts` with a sync script at `scripts/sync-openclaw-gateway-client.ts`.
 - **Gateway-backed config + agent-file edits** (`src/lib/gateway/agentConfig.ts`, `src/features/agents/state/useAgentFilesEditor.ts`): agent create/rename/heartbeat/delete via `config.get` + `config.patch`, agent file read/write via gateway WebSocket methods (`agents.files.get`, `agents.files.set`).
 - **Heartbeat helpers** (`src/lib/heartbeat/gateway.ts`): resolves per-agent heartbeat state (enabled + schedule) by combining gateway config (`config.get`) and status (`status`) for the settings panel, and triggers `wake` for “run now”. This module also defines the shared heartbeat type shapes (`AgentHeartbeat*`) used by gateway config mutation helpers (`src/lib/gateway/agentConfig.ts`), imported as type-only to avoid runtime cycles.
-- **Session lifecycle actions** (`src/features/agents/state/agentSessionActions.ts`, `src/app/page.tsx`): per-agent “New session” calls gateway `sessions.reset` on the current session key and resets local runtime transcript state.
+- **Session lifecycle actions** (`src/features/agents/state/store.tsx`, `src/app/page.tsx`): per-agent “New session” calls gateway `sessions.reset` on the current session key and resets local runtime transcript state.
 - **Local OpenClaw config + paths** (`src/lib/clawdbot`): state/config/.env path resolution with `OPENCLAW_*` env overrides (`src/lib/clawdbot/paths.ts`). Local config access is used for optional Discord provisioning and local path/config helpers; shared local config list helpers live in `src/lib/clawdbot/config.ts` and are reused by Discord provisioning. Gateway URL/token in Studio are sourced from studio settings.
 - **Shared agent config-list helpers** (`src/lib/agents/configList.ts`): pure `agents.list` read/write/upsert helpers reused by both gateway config patching (`src/lib/gateway/agentConfig.ts`) and local config access (`src/lib/clawdbot/config.ts`) to keep list-shape semantics aligned.
 - **Discord integration** (`src/lib/discord`, API route): channel provisioning and config binding (local gateway only).
-- **Shared utilities** (`src/lib/*`): env, ids, names, avatars, text parsing, logging, filesystem helpers.
+- **Shared utilities** (`src/lib/*`): env, ids, names, avatars, message parsing/normalization (including tool-line formatting) in `src/lib/text/message-extract.ts`, cron types + selection helpers in `src/lib/cron/types.ts`, logging, filesystem helpers.
 
 ## Directory layout (top-level)
 - `src/app`: Next.js App Router pages, layouts, global styles, and API routes.
@@ -91,7 +91,7 @@ Flow:
 - **Transport boundary**: `syncGatewaySessionSettings` in `src/lib/gateway/sessionSettings.ts` is the only client-side builder/invoker for `sessions.patch` payloads.
 
 ## Cross-cutting concerns
-- **Configuration**: `src/lib/env` validates env via zod; `lib/clawdbot/paths.ts` resolves config path and state dirs, honoring `OPENCLAW_STATE_DIR`/`OPENCLAW_CONFIG_PATH` and legacy fallbacks. Studio settings live under `<state dir>/openclaw-studio/settings.json`.
+- **Configuration**: environment variables are read directly from `process.env` (for example `NEXT_PUBLIC_GATEWAY_URL` for the client’s default gateway URL); `lib/clawdbot/paths.ts` resolves config path and state dirs, honoring `OPENCLAW_STATE_DIR`/`OPENCLAW_CONFIG_PATH` and legacy fallbacks. Studio settings live under `<state dir>/openclaw-studio/settings.json`.
 - **Logging**: `src/lib/logger` (console wrappers) used in API routes and gateway client.
 - **Error handling**:
   - API routes return JSON `{ error }` with appropriate status.
