@@ -984,8 +984,19 @@ const AgentStudioPage = () => {
 
   useEffect(() => {
     if (status !== "connected" || !focusedPreferencesLoaded) return;
+    if (deleteAgentBlock && deleteAgentBlock.phase !== "queued") return;
+    if (createAgentBlock && createAgentBlock.phase !== "queued") return;
+    if (renameAgentBlock && renameAgentBlock.phase !== "queued") return;
     void loadAgents();
-  }, [focusedPreferencesLoaded, gatewayUrl, loadAgents, status]);
+  }, [
+    createAgentBlock,
+    deleteAgentBlock,
+    focusedPreferencesLoaded,
+    gatewayUrl,
+    loadAgents,
+    renameAgentBlock,
+    status,
+  ]);
 
   useEffect(() => {
     if (status === "disconnected") {
@@ -1524,6 +1535,9 @@ const AgentStudioPage = () => {
     const finalize = async () => {
       await loadAgents();
       if (cancelled) return;
+      if (createAgentBlock.agentId) {
+        dispatch({ type: "selectAgent", agentId: createAgentBlock.agentId });
+      }
       setCreateAgentBlock(null);
       setMobilePane("chat");
     };
@@ -1531,7 +1545,7 @@ const AgentStudioPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [createAgentBlock, loadAgents, status]);
+  }, [createAgentBlock, dispatch, loadAgents, status]);
 
   useEffect(() => {
     if (!createAgentBlock) return;
