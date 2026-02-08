@@ -91,6 +91,11 @@ import {
 } from "@/lib/gateway/GatewayClient";
 import { fetchJson } from "@/lib/http";
 import { bootstrapAgentBrainFilesFromTemplate } from "@/lib/gateway/agentFiles";
+import {
+  runDeleteAgentTransaction,
+  type RestoreAgentStateResult,
+  type TrashAgentStateResult,
+} from "@/features/agents/operations/deleteAgentTransaction";
 
 type ChatHistoryMessage = Record<string, unknown>;
 
@@ -116,20 +121,6 @@ type AgentsListResult = {
       avatarUrl?: string;
     };
   }>;
-};
-
-type GatewayAgentStateMove = {
-  from: string;
-  to: string;
-};
-
-type TrashAgentStateResult = {
-  trashDir: string;
-  moved: GatewayAgentStateMove[];
-};
-
-type RestoreAgentStateResult = {
-  restored: GatewayAgentStateMove[];
 };
 
 type SessionsListEntry = {
@@ -1347,31 +1338,40 @@ const AgentStudioPage = () => {
                 phase: "deleting",
               };
             });
-            const { result: trashed } = await fetchJson<{ result: TrashAgentStateResult }>(
-              "/api/gateway/agent-state",
+            await runDeleteAgentTransaction(
               {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ agentId }),
-              }
+                trashAgentState: async (agentId) => {
+                  const { result } = await fetchJson<{ result: TrashAgentStateResult }>(
+                    "/api/gateway/agent-state",
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ agentId }),
+                    }
+                  );
+                  return result;
+                },
+                restoreAgentState: async (agentId, trashDir) => {
+                  const { result } = await fetchJson<{ result: RestoreAgentStateResult }>(
+                    "/api/gateway/agent-state",
+                    {
+                      method: "PUT",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ agentId, trashDir }),
+                    }
+                  );
+                  return result;
+                },
+                removeCronJobsForAgent: async (agentId) => {
+                  await removeCronJobsForAgent(client, agentId);
+                },
+                deleteGatewayAgent: async (agentId) => {
+                  await deleteGatewayAgent({ client, agentId });
+                },
+                logError: (message, error) => console.error(message, error),
+              },
+              agentId
             );
-            try {
-              await removeCronJobsForAgent(client, agentId);
-              await deleteGatewayAgent({ client, agentId });
-            } catch (err) {
-              if (trashed.moved.length > 0) {
-                try {
-                  await fetchJson<{ result: RestoreAgentStateResult }>("/api/gateway/agent-state", {
-                    method: "PUT",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ agentId, trashDir: trashed.trashDir }),
-                  });
-                } catch (restoreErr) {
-                  console.error(restoreErr);
-                }
-              }
-              throw err;
-            }
             setSettingsAgentId(null);
             setDeleteAgentBlock((current) => {
               if (!current || current.agentId !== agentId) return current;
