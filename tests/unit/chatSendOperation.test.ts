@@ -3,38 +3,50 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentState } from "@/features/agents/state/store";
 import { sendChatMessageViaStudio } from "@/features/agents/operations/chatSendOperation";
 
-const createAgent = (overrides?: Partial<AgentState>): AgentState => ({
-  agentId: "agent-1",
-  name: "Agent One",
-  sessionKey: "agent:agent-1:studio:test-session",
-  status: "idle",
-  sessionCreated: false,
-  awaitingUserInput: false,
-  hasUnseenActivity: false,
-  outputLines: [],
-  lastResult: null,
-  lastDiff: null,
-  runId: null,
-  runStartedAt: null,
-  streamText: null,
-  thinkingTrace: null,
-  latestOverride: null,
-  latestOverrideKind: null,
-  lastAssistantMessageAt: null,
-  lastActivityAt: null,
-  latestPreview: null,
-  lastUserMessage: null,
-  draft: "",
-  sessionSettingsSynced: true,
-  historyLoadedAt: null,
-  toolCallingEnabled: true,
-  showThinkingTraces: true,
-  model: "openai/gpt-5",
-  thinkingLevel: "medium",
-  avatarSeed: "seed-1",
-  avatarUrl: null,
-  ...(overrides ?? {}),
-});
+const createAgent = (overrides?: Partial<AgentState>): AgentState => {
+  const base: AgentState = {
+    agentId: "agent-1",
+    name: "Agent One",
+    sessionKey: "agent:agent-1:studio:test-session",
+    status: "idle",
+    sessionCreated: false,
+    awaitingUserInput: false,
+    hasUnseenActivity: false,
+    outputLines: [],
+    lastResult: null,
+    lastDiff: null,
+    runId: null,
+    runStartedAt: null,
+    streamText: null,
+    thinkingTrace: null,
+    latestOverride: null,
+    latestOverrideKind: null,
+    lastAssistantMessageAt: null,
+    lastActivityAt: null,
+    latestPreview: null,
+    lastUserMessage: null,
+    draft: "",
+    sessionSettingsSynced: true,
+    historyLoadedAt: null,
+    historyFetchLimit: null,
+    historyFetchedCount: null,
+    historyMaybeTruncated: false,
+    toolCallingEnabled: true,
+    showThinkingTraces: true,
+    model: "openai/gpt-5",
+    thinkingLevel: "medium",
+    avatarSeed: "seed-1",
+    avatarUrl: null,
+  };
+  const merged = { ...base, ...(overrides ?? {}) };
+
+  return {
+    ...merged,
+    historyFetchLimit: merged.historyFetchLimit ?? null,
+    historyFetchedCount: merged.historyFetchedCount ?? null,
+    historyMaybeTruncated: merged.historyMaybeTruncated ?? false,
+  };
+};
 
 describe("sendChatMessageViaStudio", () => {
   it("handles_reset_command", async () => {

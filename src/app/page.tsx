@@ -82,6 +82,9 @@ type ChatHistoryResult = {
   thinkingLevel?: string;
 };
 
+const DEFAULT_CHAT_HISTORY_LIMIT = 200;
+const MAX_CHAT_HISTORY_LIMIT = 5000;
+
 type SessionsListEntry = {
   key: string;
   updatedAt?: number | null;
@@ -839,25 +842,31 @@ const AgentStudioPage = () => {
   }, [agents, heartbeatTick, updateSpecialLatestUpdate]);
 
   const loadAgentHistory = useCallback(
-    async (agentId: string) => {
+    async (agentId: string, options?: { limit?: number }) => {
       const agent = stateRef.current.agents.find((entry) => entry.agentId === agentId);
       const sessionKey = agent?.sessionKey?.trim();
       if (!agent || !agent.sessionCreated || !sessionKey) return;
       if (historyInFlightRef.current.has(sessionKey)) return;
 
+      const requestedLimit = options?.limit;
+      const resolvedLimit =
+        typeof requestedLimit === "number" && Number.isFinite(requestedLimit) && requestedLimit > 0
+          ? Math.min(MAX_CHAT_HISTORY_LIMIT, Math.floor(requestedLimit))
+          : DEFAULT_CHAT_HISTORY_LIMIT;
       historyInFlightRef.current.add(sessionKey);
       const loadedAt = Date.now();
       try {
         const result = await client.call<ChatHistoryResult>("chat.history", {
           sessionKey,
-          limit: 200,
+          limit: resolvedLimit,
         });
         const latest = stateRef.current.agents.find((entry) => entry.agentId === agentId);
         if (!latest || latest.sessionKey.trim() !== sessionKey) {
           return;
         }
+        const historyMessages = result.messages ?? [];
         const patch = buildHistorySyncPatch({
-          messages: result.messages ?? [],
+          messages: historyMessages,
           currentLines: latest.outputLines,
           loadedAt,
           status: latest.status,
@@ -866,7 +875,12 @@ const AgentStudioPage = () => {
         dispatch({
           type: "updateAgent",
           agentId,
-          patch,
+          patch: {
+            ...patch,
+            historyFetchLimit: resolvedLimit,
+            historyFetchedCount: historyMessages.length,
+            historyMaybeTruncated: historyMessages.length >= resolvedLimit,
+          },
         });
       } catch (err) {
         if (!isGatewayDisconnectLikeError(err)) {
@@ -878,6 +892,16 @@ const AgentStudioPage = () => {
       }
     },
     [client, dispatch]
+  );
+
+  const loadMoreAgentHistory = useCallback(
+    (agentId: string) => {
+      const agent = stateRef.current.agents.find((entry) => entry.agentId === agentId);
+      const currentLimit = agent?.historyFetchLimit ?? DEFAULT_CHAT_HISTORY_LIMIT;
+      const nextLimit = Math.min(MAX_CHAT_HISTORY_LIMIT, Math.max(400, currentLimit * 2));
+      void loadAgentHistory(agentId, { limit: nextLimit });
+    },
+    [loadAgentHistory]
   );
 
   const reconcileRunningAgents = useCallback(async () => {
@@ -1796,16 +1820,17 @@ const AgentStudioPage = () => {
             data-testid="focused-agent-panel"
           >
             {focusedAgent ? (
-              <AgentChatPanel
-                agent={focusedAgent}
-                isSelected={false}
-                canSend={status === "connected"}
-                models={gatewayModels}
-                stopBusy={stopBusyAgentId === focusedAgent.agentId}
-                onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
-                onModelChange={(value) =>
-                  handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
-                }
+	              <AgentChatPanel
+	                agent={focusedAgent}
+	                isSelected={false}
+	                canSend={status === "connected"}
+	                models={gatewayModels}
+	                stopBusy={stopBusyAgentId === focusedAgent.agentId}
+	                onLoadMoreHistory={() => loadMoreAgentHistory(focusedAgent.agentId)}
+	                onOpenSettings={() => handleOpenAgentSettings(focusedAgent.agentId)}
+	                onModelChange={(value) =>
+	                  handleModelChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
+	                }
                 onThinkingChange={(value) =>
                   handleThinkingChange(focusedAgent.agentId, focusedAgent.sessionKey, value)
                 }

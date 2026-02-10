@@ -106,6 +106,7 @@ type AgentChatPanelProps = {
   canSend: boolean;
   models: GatewayModelChoice[];
   stopBusy: boolean;
+  onLoadMoreHistory: () => void;
   onOpenSettings: () => void;
   onModelChange: (value: string | null) => void;
   onThinkingChange: (value: string | null) => void;
@@ -440,6 +441,10 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   avatarSeed,
   avatarUrl,
   status,
+  historyMaybeTruncated,
+  historyFetchedCount,
+  historyFetchLimit,
+  onLoadMoreHistory,
   chatItems,
   liveThinkingText,
   liveAssistantText,
@@ -455,6 +460,10 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   avatarSeed: string;
   avatarUrl: string | null;
   status: AgentRecord["status"];
+  historyMaybeTruncated: boolean;
+  historyFetchedCount: number | null;
+  historyFetchLimit: number | null;
+  onLoadMoreHistory: () => void;
   chatItems: AgentChatItem[];
   liveThinkingText: string;
   liveAssistantText: string;
@@ -580,6 +589,21 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
       >
         <div className="relative flex flex-col gap-4 text-xs text-foreground">
           <div aria-hidden className={`pointer-events-none absolute ${SPINE_LEFT} top-0 bottom-0 w-px bg-border/20`} />
+          {historyMaybeTruncated ? (
+            <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between gap-3 rounded-[10px] border border-border/60 bg-card/85 px-3 py-2 backdrop-blur">
+              <div className="min-w-0 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Showing most recent {typeof historyFetchedCount === "number" ? historyFetchedCount : "?"} messages
+                {typeof historyFetchLimit === "number" ? ` (limit ${historyFetchLimit})` : ""}
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-[8px] border border-border/60 bg-background px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition hover:bg-muted"
+                onClick={onLoadMoreHistory}
+              >
+                Load more
+              </button>
+            </div>
+          ) : null}
           {chatItems.length === 0 ? (
             <EmptyStatePanel title="No messages yet." compact className="p-3 text-xs" />
           ) : (
@@ -695,6 +719,7 @@ export const AgentChatPanel = ({
   canSend,
   models,
   stopBusy,
+  onLoadMoreHistory,
   onOpenSettings,
   onModelChange,
   onThinkingChange,
@@ -968,17 +993,21 @@ export const AgentChatPanel = ({
       </div>
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4 sm:pb-4">
-        <AgentChatTranscript
-          agentId={agent.agentId}
-          name={agent.name}
-          avatarSeed={avatarSeed}
-          avatarUrl={agent.avatarUrl ?? null}
-          status={agent.status}
-          chatItems={chatItems}
-          liveThinkingText={liveThinkingText}
-          liveAssistantText={liveAssistantText}
-          showTypingIndicator={showTypingIndicator}
-          outputLineCount={agent.outputLines.length}
+	        <AgentChatTranscript
+	          agentId={agent.agentId}
+	          name={agent.name}
+	          avatarSeed={avatarSeed}
+	          avatarUrl={agent.avatarUrl ?? null}
+	          status={agent.status}
+	          historyMaybeTruncated={agent.historyMaybeTruncated}
+	          historyFetchedCount={agent.historyFetchedCount}
+	          historyFetchLimit={agent.historyFetchLimit}
+	          onLoadMoreHistory={onLoadMoreHistory}
+	          chatItems={chatItems}
+	          liveThinkingText={liveThinkingText}
+	          liveAssistantText={liveAssistantText}
+	          showTypingIndicator={showTypingIndicator}
+	          outputLineCount={agent.outputLines.length}
           liveAssistantCharCount={agent.streamText?.length ?? 0}
           liveThinkingCharCount={agent.thinkingTrace?.length ?? 0}
           runStartedAt={agent.runStartedAt}

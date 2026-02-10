@@ -45,6 +45,9 @@ export type AgentState = AgentStoreSeed & {
   draft: string;
   sessionSettingsSynced: boolean;
   historyLoadedAt: number | null;
+  historyFetchLimit: number | null;
+  historyFetchedCount: number | null;
+  historyMaybeTruncated: boolean;
   toolCallingEnabled: boolean;
   showThinkingTraces: boolean;
 };
@@ -68,6 +71,9 @@ export const buildNewSessionAgentPatch = (agent: AgentState): Partial<AgentState
     lastUserMessage: null,
     draft: "",
     historyLoadedAt: null,
+    historyFetchLimit: null,
+    historyFetchedCount: null,
+    historyMaybeTruncated: false,
     awaitingUserInput: false,
     hasUnseenActivity: false,
     sessionCreated: true,
@@ -129,6 +135,9 @@ const createRuntimeAgentState = (
     draft: sameSessionKey ? (existing?.draft ?? "") : "",
     sessionSettingsSynced: sameSessionKey ? (existing?.sessionSettingsSynced ?? false) : false,
     historyLoadedAt: sameSessionKey ? (existing?.historyLoadedAt ?? null) : null,
+    historyFetchLimit: sameSessionKey ? (existing?.historyFetchLimit ?? null) : null,
+    historyFetchedCount: sameSessionKey ? (existing?.historyFetchedCount ?? null) : null,
+    historyMaybeTruncated: sameSessionKey ? (existing?.historyMaybeTruncated ?? false) : false,
     toolCallingEnabled: seed.toolCallingEnabled ?? existing?.toolCallingEnabled ?? false,
     showThinkingTraces: seed.showThinkingTraces ?? existing?.showThinkingTraces ?? true,
   };

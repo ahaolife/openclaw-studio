@@ -39,7 +39,7 @@ export type GatewayRuntimeEventHandlerDeps = {
   now?: () => number;
 
   loadSummarySnapshot: () => Promise<void>;
-  loadAgentHistory: (agentId: string) => Promise<void>;
+  loadAgentHistory: (agentId: string, options?: { limit?: number }) => Promise<void>;
   refreshHeartbeatLatestUpdate: () => void;
   bumpHeartbeatTick: () => void;
 

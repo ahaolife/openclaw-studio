@@ -5,38 +5,50 @@ import type { AgentState } from "@/features/agents/state/store";
 import { AgentChatPanel } from "@/features/agents/components/AgentChatPanel";
 import type { GatewayModelChoice } from "@/lib/gateway/models";
 
-const createAgent = (patch?: Partial<AgentState>): AgentState => ({
-  agentId: "agent-1",
-  name: "Agent One",
-  sessionKey: "agent:agent-1:studio:test-session",
-  status: "idle",
-  sessionCreated: true,
-  awaitingUserInput: false,
-  hasUnseenActivity: false,
-  outputLines: [],
-  lastResult: null,
-  lastDiff: null,
-  runId: null,
-  runStartedAt: null,
-  streamText: null,
-  thinkingTrace: null,
-  latestOverride: null,
-  latestOverrideKind: null,
-  lastAssistantMessageAt: null,
-  lastActivityAt: null,
-  latestPreview: null,
-  lastUserMessage: null,
-  draft: "",
-  sessionSettingsSynced: true,
-  historyLoadedAt: null,
-  toolCallingEnabled: true,
-  showThinkingTraces: true,
-  model: null,
-  thinkingLevel: null,
-  avatarSeed: "seed-1",
-  avatarUrl: null,
-  ...patch,
-});
+const createAgent = (patch?: Partial<AgentState>): AgentState => {
+  const base: AgentState = {
+    agentId: "agent-1",
+    name: "Agent One",
+    sessionKey: "agent:agent-1:studio:test-session",
+    status: "idle",
+    sessionCreated: true,
+    awaitingUserInput: false,
+    hasUnseenActivity: false,
+    outputLines: [],
+    lastResult: null,
+    lastDiff: null,
+    runId: null,
+    runStartedAt: null,
+    streamText: null,
+    thinkingTrace: null,
+    latestOverride: null,
+    latestOverrideKind: null,
+    lastAssistantMessageAt: null,
+    lastActivityAt: null,
+    latestPreview: null,
+    lastUserMessage: null,
+    draft: "",
+    sessionSettingsSynced: true,
+    historyLoadedAt: null,
+    historyFetchLimit: null,
+    historyFetchedCount: null,
+    historyMaybeTruncated: false,
+    toolCallingEnabled: true,
+    showThinkingTraces: true,
+    model: null,
+    thinkingLevel: null,
+    avatarSeed: "seed-1",
+    avatarUrl: null,
+  };
+  const merged = { ...base, ...(patch ?? {}) };
+
+  return {
+    ...merged,
+    historyFetchLimit: merged.historyFetchLimit ?? null,
+    historyFetchedCount: merged.historyFetchedCount ?? null,
+    historyMaybeTruncated: merged.historyMaybeTruncated ?? false,
+  };
+};
 
 describe("AgentChatPanel composer autoresize", () => {
   const models: GatewayModelChoice[] = [{ provider: "openai", id: "gpt-5", name: "gpt-5" }];
@@ -84,6 +96,7 @@ describe("AgentChatPanel composer autoresize", () => {
         canSend: true,
         models,
         stopBusy: false,
+        onLoadMoreHistory: vi.fn(),
         onOpenSettings: vi.fn(),
         onModelChange: vi.fn(),
         onThinkingChange: vi.fn(),
