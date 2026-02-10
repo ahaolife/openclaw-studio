@@ -87,6 +87,31 @@ const formatHeartbeatTarget = (heartbeat: AgentHeartbeatSummary) =>
 const formatHeartbeatSource = (heartbeat: AgentHeartbeatSummary) =>
   heartbeat.source === "override" ? "Override" : "Inherited";
 
+const formatCronStateLine = (job: CronJobSummary): string | null => {
+  if (typeof job.state.runningAtMs === "number" && Number.isFinite(job.state.runningAtMs)) {
+    return "Running now";
+  }
+  if (typeof job.state.nextRunAtMs === "number" && Number.isFinite(job.state.nextRunAtMs)) {
+    return `Next: ${new Date(job.state.nextRunAtMs).toLocaleString()}`;
+  }
+  if (typeof job.state.lastRunAtMs === "number" && Number.isFinite(job.state.lastRunAtMs)) {
+    const status = job.state.lastStatus ? `${job.state.lastStatus} ` : "";
+    return `Last: ${status}${new Date(job.state.lastRunAtMs).toLocaleString()}`.trim();
+  }
+  return null;
+};
+
+const getFirstLinePreview = (value: string, maxChars: number): string => {
+  const firstLine =
+    value
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+  if (!firstLine) return "";
+  if (firstLine.length <= maxChars) return firstLine;
+  return `${firstLine.slice(0, maxChars)}...`;
+};
+
 export const AgentSettingsPanel = ({
   agent,
   onClose,
@@ -115,6 +140,7 @@ export const AgentSettingsPanel = ({
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const [expandedCronJobIds, setExpandedCronJobIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     setNameDraft(agent.name);
@@ -283,21 +309,71 @@ export const AgentSettingsPanel = ({
                 const runBusy = cronRunBusyJobId === job.id;
                 const deleteBusy = cronDeleteBusyJobId === job.id;
                 const busy = runBusy || deleteBusy;
+                const scheduleText = formatCronSchedule(job.schedule);
+                const payloadText = formatCronPayload(job.payload).trim();
+                const payloadPreview = getFirstLinePreview(payloadText, 160);
+                const payloadExpandable =
+                  payloadText.length > payloadPreview.length || payloadText.split("\n").length > 1;
+                const expanded = expandedCronJobIds.has(job.id);
+                const stateLine = formatCronStateLine(job);
                 return (
                   <div
                     key={job.id}
                     className="group/cron flex items-start justify-between gap-2 rounded-md border border-border/80 bg-card/75 px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
-                        {job.name}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <div className="min-w-0 flex-1 truncate font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                          {job.name}
+                        </div>
+                        {!job.enabled ? (
+                          <div className="shrink-0 rounded-full border border-border/80 bg-muted/40 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            Disabled
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {formatCronSchedule(job.schedule)}
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          Schedule
+                        </span>
+                        <div className="break-words">{scheduleText}</div>
                       </div>
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {formatCronPayload(job.payload)}
-                      </div>
+                      {stateLine ? (
+                        <div className="mt-1 break-words text-[11px] text-muted-foreground">
+                          {stateLine}
+                        </div>
+                      ) : null}
+                      {payloadText ? (
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              Task
+                            </span>
+                            {payloadExpandable ? (
+                              <button
+                                className="shrink-0 rounded-md border border-border/80 bg-card/70 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:border-border hover:bg-muted/65"
+                                type="button"
+                                onClick={() => {
+                                  setExpandedCronJobIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(job.id)) {
+                                      next.delete(job.id);
+                                    } else {
+                                      next.add(job.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              >
+                                {expanded ? "Less" : "More"}
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5 whitespace-pre-wrap break-words" title={payloadText}>
+                            {expanded ? payloadText : payloadPreview || payloadText}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-1 opacity-0 transition group-focus-within/cron:opacity-100 group-hover/cron:opacity-100">
                       <button
