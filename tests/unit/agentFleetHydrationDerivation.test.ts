@@ -21,7 +21,6 @@ describe("deriveHydrateAgentFleetResult", () => {
     const result = deriveHydrateAgentFleetResult({
       gatewayUrl,
       configSnapshot: {
-        hash: "hash-1",
         config: {
           agents: {
             defaults: {
@@ -164,4 +163,3 @@ describe("deriveHydrateAgentFleetResult", () => {
     expect(result.suggestedSelectedAgentId).toBe("agent-2");
   });
 });
-

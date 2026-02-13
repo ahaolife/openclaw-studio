@@ -384,7 +384,9 @@ const isAuthError = (errorMessage: string | null): boolean => {
     lower.includes("unauthorized") ||
     lower.includes("forbidden") ||
     lower.includes("invalid token") ||
-    lower.includes("token required")
+    lower.includes("token required") ||
+    (lower.includes("token") && lower.includes("not configured")) ||
+    lower.includes("gateway_token_missing")
   );
 };
 
