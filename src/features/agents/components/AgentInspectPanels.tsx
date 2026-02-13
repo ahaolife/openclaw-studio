@@ -173,7 +173,7 @@ const createInitialCronDraft = (): CronCreateDraft => ({
   everyUnit: "minutes",
   everyAtTime: "09:00",
   everyTimeZone: resolveLocalTimeZone(),
-  deliveryMode: "announce",
+  deliveryMode: "none",
   deliveryChannel: "last",
 });
 
@@ -181,7 +181,7 @@ const applyTemplateDefaults = (templateId: CronCreateTemplateId, current: CronCr
   const nextTimeZone = (current.everyTimeZone ?? "").trim() || resolveLocalTimeZone();
   const base = {
     ...createInitialCronDraft(),
-    deliveryMode: current.deliveryMode ?? "announce",
+    deliveryMode: current.deliveryMode ?? "none",
     deliveryChannel: current.deliveryChannel || "last",
     deliveryTo: current.deliveryTo,
     advancedSessionTarget: current.advancedSessionTarget,

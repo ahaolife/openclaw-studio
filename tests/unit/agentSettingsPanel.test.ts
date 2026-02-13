@@ -444,7 +444,7 @@ describe("AgentSettingsPanel", () => {
         scheduleKind: "every",
         everyAmount: 30,
         everyUnit: "minutes",
-        deliveryMode: "announce",
+        deliveryMode: "none",
         deliveryChannel: "last",
       });
     });

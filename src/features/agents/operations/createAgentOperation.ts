@@ -11,6 +11,7 @@ import {
 } from "@/lib/gateway/execApprovals";
 import { writeGatewayAgentFiles } from "@/lib/gateway/agentFiles";
 import type { GatewayClient } from "@/lib/gateway/GatewayClient";
+import { ensureGatewaySandboxEnvAllowlistFromDotEnv } from "@/lib/gateway/sandboxEnvAllowlist";
 
 export type AgentGuidedSetup = {
   agentOverrides: GatewayAgentOverrides;
@@ -34,6 +35,7 @@ export const applyGuidedAgentSetup = async (params: {
   if (!agentId) {
     throw new Error("Agent id is required.");
   }
+  await ensureGatewaySandboxEnvAllowlistFromDotEnv({ client: params.client });
   await writeGatewayAgentFiles({
     client: params.client,
     agentId,

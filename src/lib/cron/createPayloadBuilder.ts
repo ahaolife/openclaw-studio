@@ -290,7 +290,7 @@ export const buildCronJobCreateInput = (
     };
   }
 
-  const deliveryMode = draft.deliveryMode ?? "announce";
+  const deliveryMode = draft.deliveryMode ?? "none";
   const deliveryChannel = (draft.deliveryChannel ?? "").trim() || "last";
   const deliveryTo = (draft.deliveryTo ?? "").trim();
 

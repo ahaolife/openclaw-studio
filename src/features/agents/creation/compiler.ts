@@ -236,7 +236,7 @@ const CONTROL_DEFAULTS: Record<AgentControlLevel, ControlDefaults> = {
   balanced: {
     execAutonomy: "ask-first",
     fileEditAutonomy: "propose-only",
-    sandboxMode: "non-main",
+    sandboxMode: "all",
     workspaceAccess: "ro",
     approvalSecurity: "allowlist",
     approvalAsk: "on-miss",
@@ -244,7 +244,7 @@ const CONTROL_DEFAULTS: Record<AgentControlLevel, ControlDefaults> = {
   autopilot: {
     execAutonomy: "auto",
     fileEditAutonomy: "auto-edit",
-    sandboxMode: "non-main",
+    sandboxMode: "all",
     workspaceAccess: "rw",
     approvalSecurity: "full",
     approvalAsk: "off",
@@ -459,10 +459,7 @@ export const compileGuidedAgentCreation = (params: {
   const normalizedDeny = Array.from(ensureToolDeny).filter(
     (entry) => !ensureToolAlsoAllow.has(entry)
   );
-  const normalizedSandboxMode =
-    params.draft.controls.allowExec && params.draft.controls.sandboxMode === "off"
-      ? "non-main"
-      : params.draft.controls.sandboxMode;
+  const normalizedSandboxMode = "all";
 
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -520,9 +517,7 @@ export const compileGuidedAgentCreation = (params: {
   const sandboxSummary =
     normalizedSandboxMode === "all"
       ? "All sessions run in an isolated sandbox."
-      : normalizedSandboxMode === "non-main"
-        ? "Group sessions run in an isolated sandbox; your main chat runs normally."
-        : "Sessions run without sandbox isolation.";
+      : "Sessions run without sandbox isolation.";
   const fileSummary = !fileToolsEnabled
     ? "File tools are disabled."
     : params.draft.controls.fileEditAutonomy === "auto-edit"
@@ -554,6 +549,11 @@ export const compileGuidedAgentCreation = (params: {
         profile: params.draft.controls.toolsProfile,
         alsoAllow: normalizedAlsoAllow,
         deny: normalizedDeny,
+        sandbox: {
+          tools: {
+            allow: [],
+          },
+        },
       },
     },
     execApprovals: params.draft.controls.allowExec

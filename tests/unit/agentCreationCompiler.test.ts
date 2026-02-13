@@ -142,7 +142,7 @@ describe("compileGuidedAgentCreation", () => {
     expect(result.validation.errors).toContain("Auto exec requires runtime tools to be enabled.");
   });
 
-  it("normalizes sandbox mode to non-main when exec is enabled", () => {
+  it("forces sandbox mode to all when compiling guided agent creation", () => {
     const draft = createDraft();
     draft.controls.allowExec = true;
     draft.controls.execAutonomy = "ask-first";
@@ -155,7 +155,7 @@ describe("compileGuidedAgentCreation", () => {
 
     expect(result.validation.errors).toEqual([]);
     expect(result.agentOverrides.sandbox).toEqual({
-      mode: "non-main",
+      mode: "all",
       workspaceAccess: draft.controls.workspaceAccess,
     });
   });
@@ -170,7 +170,7 @@ describe("compileGuidedAgentCreation", () => {
     expect(draft.controlLevel).toBe("autopilot");
     expect(draft.controls.toolsProfile).toBe("coding");
     expect(draft.controls.allowExec).toBe(true);
-    expect(draft.controls.sandboxMode).toBe("non-main");
+    expect(draft.controls.sandboxMode).toBe("all");
     expect(draft.controls.workspaceAccess).toBe("rw");
     expect(draft.controls.toolsAllow).toContain("group:web");
     expect(draft.controls.toolsAllow).toContain("group:fs");
@@ -188,7 +188,7 @@ describe("compileGuidedAgentCreation", () => {
     expect(draft.controls.allowExec).toBe(true);
     expect(draft.controls.execAutonomy).toBe("auto");
     expect(draft.controls.fileEditAutonomy).toBe("auto-edit");
-    expect(draft.controls.sandboxMode).toBe("non-main");
+    expect(draft.controls.sandboxMode).toBe("all");
     expect(draft.controls.workspaceAccess).toBe("rw");
   });
 

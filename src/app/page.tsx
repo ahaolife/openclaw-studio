@@ -17,7 +17,10 @@ import {
   isHeartbeatPrompt,
   stripUiMetadata,
 } from "@/lib/text/message-extract";
-import { useGatewayConnection } from "@/lib/gateway/GatewayClient";
+import {
+  parseAgentIdFromSessionKey,
+  useGatewayConnection,
+} from "@/lib/gateway/GatewayClient";
 import { createRafBatcher } from "@/lib/dom";
 import {
   buildGatewayModelChoices,
@@ -315,6 +318,7 @@ const AgentStudioPage = () => {
   );
   const specialUpdateRef = useRef<Map<string, string>>(new Map());
   const specialUpdateInFlightRef = useRef<Set<string>>(new Set());
+  const seenCronEventIdsRef = useRef<Set<string>>(new Set());
   const preferredSelectedAgentIdRef = useRef<string | null>(null);
   const pendingCreateSetupsByAgentIdRef = useRef<Record<string, AgentGuidedSetup>>({});
   const pendingDraftValuesRef = useRef<Map<string, string>>(new Map());
@@ -2022,6 +2026,48 @@ const AgentStudioPage = () => {
     const unsubscribe = client.onEvent((event: EventFrame) => {
       handler.handleEvent(event);
       handleExecApprovalEvent(event);
+      if (event.event === "cron") {
+        const payload = event.payload;
+        if (!payload || typeof payload !== "object") return;
+        const record = payload as Record<string, unknown>;
+        if (record.action !== "finished") return;
+        const sessionKey = typeof record.sessionKey === "string" ? record.sessionKey.trim() : "";
+        if (!sessionKey) return;
+        const agentId = parseAgentIdFromSessionKey(sessionKey);
+        if (!agentId) return;
+        const jobId = typeof record.jobId === "string" ? record.jobId.trim() : "";
+        if (!jobId) return;
+        const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
+        const runAtMs = typeof record.runAtMs === "number" ? record.runAtMs : null;
+        const status = typeof record.status === "string" ? record.status.trim() : "";
+        const error = typeof record.error === "string" ? record.error.trim() : "";
+        const summary = typeof record.summary === "string" ? record.summary.trim() : "";
+
+        const dedupeKey = `cron:${jobId}:${sessionId || (runAtMs ?? "none")}`;
+        if (seenCronEventIdsRef.current.has(dedupeKey)) return;
+        seenCronEventIdsRef.current.add(dedupeKey);
+
+        const agent = stateRef.current.agents.find((entry) => entry.agentId === agentId) ?? null;
+        if (!agent) return;
+
+        const header = `Cron finished (${status || "unknown"}): ${jobId}`;
+        const body = summary || error || "(no output)";
+        dispatch({
+          type: "appendOutput",
+          agentId,
+          line: `${header}\n\n${body}`,
+          transcript: {
+            source: "runtime-agent",
+            role: "assistant",
+            kind: "assistant",
+            sessionKey: agent.sessionKey,
+            timestampMs: runAtMs ?? Date.now(),
+            entryId: dedupeKey,
+            confirmed: true,
+          },
+        });
+        dispatch({ type: "markActivity", agentId, at: runAtMs ?? undefined });
+      }
     });
     return () => {
       runtimeEventHandlerRef.current = null;

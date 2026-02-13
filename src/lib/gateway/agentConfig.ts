@@ -65,6 +65,12 @@ export type GatewayAgentToolsOverrides = {
   allow?: string[];
   alsoAllow?: string[];
   deny?: string[];
+  sandbox?: {
+    tools?: {
+      allow?: string[];
+      deny?: string[];
+    };
+  };
 };
 
 export type GatewayAgentOverrides = {
@@ -523,7 +529,9 @@ export const updateGatewayAgentOverrides = async (params: {
     Boolean(params.overrides.tools?.profile) ||
     params.overrides.tools?.allow !== undefined ||
     params.overrides.tools?.alsoAllow !== undefined ||
-    params.overrides.tools?.deny !== undefined;
+    params.overrides.tools?.deny !== undefined ||
+    params.overrides.tools?.sandbox?.tools?.allow !== undefined ||
+    params.overrides.tools?.sandbox?.tools?.deny !== undefined;
   if (!hasSandboxOverrides && !hasToolsOverrides) {
     return;
   }
@@ -563,6 +571,23 @@ export const updateGatewayAgentOverrides = async (params: {
       const deny = normalizeToolList(params.overrides.tools?.deny);
       if (deny !== undefined) {
         currentTools.deny = deny;
+      }
+
+      const sandboxAllow = normalizeToolList(params.overrides.tools?.sandbox?.tools?.allow);
+      const sandboxDeny = normalizeToolList(params.overrides.tools?.sandbox?.tools?.deny);
+      if (sandboxAllow !== undefined || sandboxDeny !== undefined) {
+        const sandboxRaw = (currentTools as Record<string, unknown>).sandbox;
+        const sandbox = isRecord(sandboxRaw) ? { ...sandboxRaw } : {};
+        const sandboxToolsRaw = (sandbox as Record<string, unknown>).tools;
+        const sandboxTools = isRecord(sandboxToolsRaw) ? { ...sandboxToolsRaw } : {};
+        if (sandboxAllow !== undefined) {
+          (sandboxTools as Record<string, unknown>).allow = sandboxAllow;
+        }
+        if (sandboxDeny !== undefined) {
+          (sandboxTools as Record<string, unknown>).deny = sandboxDeny;
+        }
+        (sandbox as Record<string, unknown>).tools = sandboxTools;
+        (currentTools as Record<string, unknown>).sandbox = sandbox;
       }
       next.tools = currentTools;
     }

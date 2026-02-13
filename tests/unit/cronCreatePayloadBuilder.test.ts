@@ -36,7 +36,7 @@ describe("cron create payload builder", () => {
         kind: "agentTurn",
         message: "Summarize overnight updates and priorities.",
       },
-      delivery: { mode: "announce", channel: "last" },
+      delivery: { mode: "none" },
     });
   });
 
