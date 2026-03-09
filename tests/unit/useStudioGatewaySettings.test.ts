@@ -1,0 +1,174 @@
+import { createElement, useEffect } from "react";
+import { act, render, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { fetchJson } from "@/lib/http";
+import type { StudioSettingsResponse } from "@/lib/studio/coordinator";
+import { defaultStudioInstallContext } from "@/lib/studio/install-context";
+import { useStudioGatewaySettings } from "@/lib/studio/useStudioGatewaySettings";
+
+vi.mock("@/lib/http", () => ({
+  fetchJson: vi.fn(),
+}));
+
+type HookValue = ReturnType<typeof useStudioGatewaySettings>;
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error?: unknown) => void;
+};
+
+const createDeferred = <T,>(): Deferred<T> => {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+};
+
+const buildEnvelope = (): StudioSettingsResponse => ({
+  settings: {
+    version: 1,
+    gateway: {
+      url: "wss://remote.example:8443",
+      token: "",
+    },
+    gatewayAutoStart: true,
+    focused: {},
+    avatars: {},
+  },
+  localGatewayDefaults: null,
+  localGatewayDefaultsMeta: {
+    hasToken: false,
+  },
+  gatewayMeta: {
+    hasStoredToken: true,
+  },
+  installContext: defaultStudioInstallContext(),
+  domainApiModeEnabled: true,
+});
+
+const renderHook = () => {
+  const coordinator = {
+    loadSettings: vi.fn(async () => buildEnvelope().settings),
+    loadSettingsEnvelope: vi.fn(async () => buildEnvelope()),
+    flushPending: vi.fn(async () => {}),
+  };
+  const valueRef: { current: HookValue | null } = { current: null };
+
+  const Probe = () => {
+    const value = useStudioGatewaySettings(coordinator);
+    useEffect(() => {
+      valueRef.current = value;
+    }, [value]);
+    return createElement("div", { "data-testid": "probe" }, "ok");
+  };
+
+  const rendered = render(createElement(Probe));
+
+  return {
+    coordinator,
+    getValue: () => {
+      if (!valueRef.current) {
+        throw new Error("hook value unavailable");
+      }
+      return valueRef.current;
+    },
+    unmount: () => rendered.unmount(),
+  };
+};
+
+describe("useStudioGatewaySettings", () => {
+  const mockedFetchJson = vi.mocked(fetchJson);
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    mockedFetchJson.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          enabled: true,
+          summary: {
+            status: "connected",
+            reason: null,
+          },
+        }),
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("blocks save while disconnect is still in flight", async () => {
+    const disconnectDeferred = createDeferred<{
+      enabled: boolean;
+      summary: {
+        status: string;
+        reason: string | null;
+        asOf?: string | null;
+        outboxHead?: number;
+      };
+    }>();
+    mockedFetchJson.mockImplementation(async (input) => {
+      if (input === "/api/runtime/disconnect") {
+        return await disconnectDeferred.promise;
+      }
+      throw new Error(`Unexpected fetchJson call: ${String(input)}`);
+    });
+
+    const ctx = renderHook();
+
+    await waitFor(() => {
+      expect(ctx.getValue().status).toBe("connected");
+    });
+
+    let disconnectPromise: Promise<void> | undefined;
+    act(() => {
+      disconnectPromise = ctx.getValue().disconnect();
+    });
+
+    await waitFor(() => {
+      expect(ctx.getValue().disconnecting).toBe(true);
+    });
+    expect(ctx.getValue().status).toBe("connected");
+
+    let saveResult = true;
+    await act(async () => {
+      saveResult = await ctx.getValue().saveSettings();
+    });
+
+    expect(saveResult).toBe(false);
+    expect(ctx.coordinator.flushPending).not.toHaveBeenCalled();
+    expect(mockedFetchJson).not.toHaveBeenCalledWith(
+      "/api/studio",
+      expect.anything()
+    );
+
+    disconnectDeferred.resolve({
+      enabled: true,
+      summary: {
+        status: "stopped",
+        reason: null,
+      },
+    });
+
+    await act(async () => {
+      await disconnectPromise;
+    });
+
+    await waitFor(() => {
+      expect(ctx.getValue().status).toBe("disconnected");
+    });
+    expect(ctx.getValue().disconnecting).toBe(false);
+    ctx.unmount();
+  });
+});

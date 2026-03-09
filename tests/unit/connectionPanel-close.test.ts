@@ -16,6 +16,7 @@ const buildProps = () => ({
   testResult: null,
   saving: false,
   testing: false,
+  disconnecting: false,
   onGatewayUrlChange: vi.fn(),
   onTokenChange: vi.fn(),
   onSaveSettings: vi.fn(),
@@ -70,5 +71,19 @@ describe("ConnectionPanel close control", () => {
     const connected = screen.getByText("Connected");
     expect(connected).toHaveAttribute("data-status", "connected");
     expect(connected).toHaveClass("ui-badge-status-connected");
+  });
+
+  it("disables connection actions while disconnecting", () => {
+    render(
+      createElement(ConnectionPanel, {
+        ...buildProps(),
+        status: "connected",
+        disconnecting: true,
+      })
+    );
+
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Disconnecting…" })).toBeDisabled();
   });
 });

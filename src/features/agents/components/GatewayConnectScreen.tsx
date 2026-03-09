@@ -32,6 +32,7 @@ type GatewayConnectScreenProps = {
     | null;
   saving: boolean;
   testing: boolean;
+  disconnecting: boolean;
   onGatewayUrlChange: (value: string) => void;
   onTokenChange: (value: string) => void;
   onUseLocalDefaults: () => void;
@@ -64,6 +65,7 @@ export const GatewayConnectScreen = ({
   testResult,
   saving,
   testing,
+  disconnecting,
   onGatewayUrlChange,
   onTokenChange,
   onUseLocalDefaults,
@@ -162,9 +164,10 @@ export const GatewayConnectScreen = ({
     }
     return "When Studio and OpenClaw share a host, the upstream should usually stay on localhost.";
   }, [selectedScenario, statusReason]);
-  const actionBusy = saving || testing;
+  const actionBusy = saving || testing || disconnecting;
   const saveLabel = saving ? "Saving…" : "Save settings";
   const testLabel = testing ? "Testing…" : "Test connection";
+  const disconnectLabel = disconnecting ? "Disconnecting…" : "Disconnect";
   const statusDotClass =
     status === "connected"
       ? "ui-dot-status-connected"
@@ -335,7 +338,7 @@ export const GatewayConnectScreen = ({
             onClick={() => void onDisconnect()}
             disabled={actionBusy}
           >
-            Disconnect
+            {disconnectLabel}
           </button>
         ) : null}
       </div>

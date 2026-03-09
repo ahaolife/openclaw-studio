@@ -1,4 +1,8 @@
-import { parseIntentBody, executeGatewayIntent } from "@/lib/controlplane/intent-route";
+import {
+  parseIntentBody,
+  executeGatewayIntent,
+  LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS,
+} from "@/lib/controlplane/intent-route";
 
 export const runtime = "nodejs";
 
@@ -18,5 +22,7 @@ export async function POST(request: Request) {
   return executeGatewayIntent("agent.wait", {
     runId,
     ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
+  }, {
+    timeoutMs: typeof timeoutMs === "number" ? timeoutMs : LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS,
   });
 }

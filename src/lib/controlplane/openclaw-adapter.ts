@@ -12,7 +12,7 @@ import type {
 import { loadStudioSettings } from "@/lib/studio/settings-store";
 
 const CONNECT_TIMEOUT_MS = 8_000;
-const REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 15_000;
 const CONNECT_PROTOCOL = 3;
@@ -72,6 +72,13 @@ export class ControlPlaneGatewayError extends Error {
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object");
+
+const resolveRequestTimeoutMs = (timeoutMs?: number): number => {
+  if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    return Math.max(1, Math.floor(timeoutMs));
+  }
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+};
 
 const resolveOriginForUpstream = (upstreamUrl: string): string => {
   const url = new URL(upstreamUrl);
@@ -190,7 +197,11 @@ export class OpenClawGatewayAdapter {
     this.updateStatus("stopped", null);
   }
 
-  async request<T = unknown>(method: string, params: unknown): Promise<T> {
+  async request<T = unknown>(
+    method: string,
+    params: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<T> {
     const normalizedMethod = method.trim();
     if (!normalizedMethod) {
       throw new Error("Gateway method is required.");
@@ -208,13 +219,16 @@ export class OpenClawGatewayAdapter {
 
     const id = String(this.nextRequestNumber++);
     const frame = { type: "req", id, method: normalizedMethod, params };
+    const timeoutMs = resolveRequestTimeoutMs(options?.timeoutMs);
 
     try {
       const response = await new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new Error(`Gateway request timed out for method: ${normalizedMethod}`));
-        }, REQUEST_TIMEOUT_MS);
+          reject(
+            new Error(`Gateway request timed out after ${timeoutMs}ms for method: ${normalizedMethod}`)
+          );
+        }, timeoutMs);
         this.pending.set(id, { resolve, reject, timer });
         ws.send(JSON.stringify(frame), (err) => {
           if (!err) return;
@@ -227,11 +241,11 @@ export class OpenClawGatewayAdapter {
     } catch (error) {
       if (this.isOperatorScopeMissingError(error)) {
         await this.switchToLegacyControlUiProfile();
-        return this.request<T>(method, params);
+        return this.request<T>(method, params, options);
       }
       if (this.legacyProfileSwitchPromise && this.isTransientProfileSwitchError(error)) {
         await this.legacyProfileSwitchPromise;
-        return this.request<T>(method, params);
+        return this.request<T>(method, params, options);
       }
       throw error;
     }

@@ -624,6 +624,7 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   liveAssistantCharCount,
   liveThinkingCharCount,
   runStartedAt,
+  scrollToBottomOnOpenKey,
   scrollToBottomNextOutputRef,
   pendingExecApprovals,
   onResolveExecApproval,
@@ -650,6 +651,7 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
   liveAssistantCharCount: number;
   liveThinkingCharCount: number;
   runStartedAt: number | null;
+  scrollToBottomOnOpenKey: string;
   scrollToBottomNextOutputRef: MutableRefObject<boolean>;
   pendingExecApprovals: PendingExecApproval[];
   onResolveExecApproval?: (id: string, decision: ExecApprovalDecision) => void;
@@ -709,6 +711,11 @@ const AgentChatTranscript = memo(function AgentChatTranscript({
       scrollChatToBottom();
     });
   }, [scrollChatToBottom]);
+
+  useEffect(() => {
+    setPinned(true);
+    scheduleScrollToBottom();
+  }, [scheduleScrollToBottom, scrollToBottomOnOpenKey, setPinned]);
 
   useEffect(() => {
     updatePinnedFromScroll();
@@ -1472,6 +1479,7 @@ export const AgentChatPanel = ({
   const allowThinking = selectedModel?.reasoning !== false;
 
   const avatarSeed = agent.avatarSeed ?? agent.agentId;
+  const scrollToBottomOnOpenKey = `${agent.agentId}:${agent.sessionKey}:${agent.sessionEpoch ?? 0}`;
   const emptyStateTitle = useMemo(
     () => resolveEmptyChatIntroMessage(agent.agentId, agent.sessionEpoch),
     [agent.agentId, agent.sessionEpoch]
@@ -1730,6 +1738,7 @@ export const AgentChatPanel = ({
           liveAssistantCharCount={liveAssistantText.length}
           liveThinkingCharCount={liveThinkingText.length}
           runStartedAt={agent.runStartedAt}
+          scrollToBottomOnOpenKey={scrollToBottomOnOpenKey}
           scrollToBottomNextOutputRef={scrollToBottomNextOutputRef}
           pendingExecApprovals={pendingExecApprovals}
           onResolveExecApproval={onResolveExecApproval}

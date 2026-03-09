@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 
 import { deriveRuntimeFreshness } from "@/lib/controlplane/degraded-read";
 import { peekControlPlaneRuntime } from "@/lib/controlplane/runtime";
+import { applyStudioSettingsPatch } from "@/lib/studio/settings-store";
 
 export const runtime = "nodejs";
 
 export async function POST() {
   try {
+    applyStudioSettingsPatch({ gatewayAutoStart: false });
     const controlPlane = peekControlPlaneRuntime();
     if (!controlPlane) {
       const summary = {

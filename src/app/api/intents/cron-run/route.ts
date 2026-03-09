@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { executeGatewayIntent, parseIntentBody } from "@/lib/controlplane/intent-route";
+import {
+  executeGatewayIntent,
+  LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS,
+  parseIntentBody,
+} from "@/lib/controlplane/intent-route";
 
 export const runtime = "nodejs";
 
@@ -18,5 +22,7 @@ export async function POST(request: Request) {
   return await executeGatewayIntent("cron.run", {
     id,
     mode: "force",
+  }, {
+    timeoutMs: LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS,
   });
 }

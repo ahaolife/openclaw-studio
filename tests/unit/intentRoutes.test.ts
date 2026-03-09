@@ -50,9 +50,11 @@ describe("intent routes", () => {
         callGateway,
       }),
     }));
+    const { LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS } = await import("@/lib/controlplane/intent-route");
     const resetRoute = await import("@/app/api/intents/sessions-reset/route");
     const sessionSettingsRoute = await import("@/app/api/intents/session-settings-sync/route");
     const waitRoute = await import("@/app/api/intents/agent-wait/route");
+    const cronRunRoute = await import("@/app/api/intents/cron-run/route");
 
     const resetResponse = await resetRoute.POST(
       new Request("http://localhost/api/intents/sessions-reset", {
@@ -78,16 +80,33 @@ describe("intent routes", () => {
         body: JSON.stringify({ runId: "run-1", timeoutMs: 3000 }),
       })
     );
+    const cronRunResponse = await cronRunRoute.POST(
+      new Request("http://localhost/api/intents/cron-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "job-1" }),
+      })
+    );
 
     expect(resetResponse.status).toBe(200);
     expect(sessionSettingsResponse.status).toBe(200);
     expect(waitResponse.status).toBe(200);
+    expect(cronRunResponse.status).toBe(200);
     expect(callGateway).toHaveBeenCalledWith("sessions.reset", { key: "agent:agent-1:main" });
     expect(callGateway).toHaveBeenCalledWith("sessions.patch", {
       key: "agent:agent-1:main",
       model: "openai/gpt-5",
     });
-    expect(callGateway).toHaveBeenCalledWith("agent.wait", { runId: "run-1", timeoutMs: 3000 });
+    expect(callGateway).toHaveBeenCalledWith(
+      "agent.wait",
+      { runId: "run-1", timeoutMs: 3000 },
+      { timeoutMs: 3000 }
+    );
+    expect(callGateway).toHaveBeenCalledWith(
+      "cron.run",
+      { id: "job-1", mode: "force" },
+      { timeoutMs: LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS }
+    );
   });
 
   it("agent-create route composes workspace from config path and forwards to agents.create", async () => {

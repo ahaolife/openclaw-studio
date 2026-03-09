@@ -46,6 +46,7 @@ describe("studio settings route", () => {
     expect(body.installContext).toBeTruthy();
     expect(typeof body.domainApiModeEnabled).toBe("boolean");
     expect(body.settings?.version).toBe(1);
+    expect(body.settings?.gatewayAutoStart).toBe(true);
   });
 
   it("GET always reports domain mode enabled", async () => {
@@ -130,8 +131,12 @@ describe("studio settings route", () => {
     const settingsPath = path.join(tempDir, "openclaw-studio", "settings.json");
     expect(fs.existsSync(settingsPath)).toBe(true);
     const raw = fs.readFileSync(settingsPath, "utf8");
-    const parsed = JSON.parse(raw) as { gateway?: { url?: string; token?: string } | null };
+    const parsed = JSON.parse(raw) as {
+      gateway?: { url?: string; token?: string } | null;
+      gatewayAutoStart?: boolean;
+    };
     expect(parsed.gateway).toEqual({ url: "ws://example.test:1234", token: "t" });
+    expect(parsed.gatewayAutoStart).toBe(true);
   });
 
   it("PUT url-only gateway patch preserves existing token", async () => {
@@ -169,10 +174,11 @@ describe("studio settings route", () => {
 
     const persisted = JSON.parse(
       fs.readFileSync(path.join(tempDir, "openclaw-studio", "settings.json"), "utf8")
-    ) as { gateway?: { url?: string; token?: string } };
+    ) as { gateway?: { url?: string; token?: string }; gatewayAutoStart?: boolean };
     expect(persisted.gateway).toEqual({
       url: "ws://new.example:18789",
       token: "secret-token",
     });
+    expect(persisted.gatewayAutoStart).toBe(true);
   });
 });

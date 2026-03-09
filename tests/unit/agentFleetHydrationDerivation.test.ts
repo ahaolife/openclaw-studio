@@ -10,6 +10,7 @@ describe("deriveHydrateAgentFleetResult", () => {
     const settings: StudioSettings = {
       version: 1,
       gateway: null,
+      gatewayAutoStart: true,
       focused: {},
       avatars: {
         "ws://localhost:18789": {

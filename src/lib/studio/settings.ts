@@ -20,12 +20,14 @@ export type StudioFocusedPreference = {
 export type StudioSettings = {
   version: 1;
   gateway: StudioGatewaySettings | null;
+  gatewayAutoStart: boolean;
   focused: Record<string, StudioFocusedPreference>;
   avatars: Record<string, Record<string, string>>;
 };
 
 export type StudioSettingsPatch = {
   gateway?: StudioGatewaySettingsPatch | null;
+  gatewayAutoStart?: boolean | null;
   focused?: Record<string, Partial<StudioFocusedPreference> | null>;
   avatars?: Record<string, Record<string, string | null> | null>;
 };
@@ -180,6 +182,7 @@ const normalizeAvatars = (value: unknown): Record<string, Record<string, string>
 export const defaultStudioSettings = (): StudioSettings => ({
   version: SETTINGS_VERSION,
   gateway: null,
+  gatewayAutoStart: true,
   focused: {},
   avatars: {},
 });
@@ -187,11 +190,13 @@ export const defaultStudioSettings = (): StudioSettings => ({
 export const normalizeStudioSettings = (raw: unknown): StudioSettings => {
   if (!isRecord(raw)) return defaultStudioSettings();
   const gateway = normalizeGatewaySettings(raw.gateway);
+  const gatewayAutoStart = typeof raw.gatewayAutoStart === "boolean" ? raw.gatewayAutoStart : true;
   const focused = normalizeFocused(raw.focused);
   const avatars = normalizeAvatars(raw.avatars);
   return {
     version: SETTINGS_VERSION,
     gateway,
+    gatewayAutoStart,
     focused,
     avatars,
   };
@@ -202,6 +207,8 @@ export const mergeStudioSettings = (
   patch: StudioSettingsPatch
 ): StudioSettings => {
   const nextGateway = mergeGatewaySettings(current.gateway, patch.gateway);
+  const nextGatewayAutoStart =
+    typeof patch.gatewayAutoStart === "boolean" ? patch.gatewayAutoStart : current.gatewayAutoStart;
   const nextFocused = { ...current.focused };
   const nextAvatars = { ...current.avatars };
   if (patch.focused) {
@@ -246,6 +253,7 @@ export const mergeStudioSettings = (
   return {
     version: SETTINGS_VERSION,
     gateway: nextGateway ?? null,
+    gatewayAutoStart: nextGatewayAutoStart,
     focused: nextFocused,
     avatars: nextAvatars,
   };

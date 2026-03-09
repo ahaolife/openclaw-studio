@@ -5,7 +5,7 @@ import type { AgentState } from "@/features/agents/state/store";
 import { AgentChatPanel } from "@/features/agents/components/AgentChatPanel";
 import type { GatewayModelChoice } from "@/lib/gateway/models";
 
-const createAgent = (): AgentState => ({
+const createAgent = (overrides: Partial<AgentState> = {}): AgentState => ({
   agentId: "agent-1",
   name: "Agent One",
   sessionKey: "agent:agent-1:studio:test-session",
@@ -38,6 +38,7 @@ const createAgent = (): AgentState => ({
   thinkingLevel: null,
   avatarSeed: "seed-1",
   avatarUrl: null,
+  ...overrides,
 });
 
 describe("AgentChatPanel scrolling", () => {
@@ -56,14 +57,14 @@ describe("AgentChatPanel scrolling", () => {
       createElement(AgentChatPanel, {
         agent: { ...agent, outputLines: ["> hello", "first answer"] },
         isSelected: true,
-	        canSend: true,
-	        models,
-	        stopBusy: false,
-	        onLoadMoreHistory: vi.fn(),
-	        onOpenSettings: vi.fn(),
-	        onModelChange: vi.fn(),
-	        onThinkingChange: vi.fn(),
-	        onDraftChange: vi.fn(),
+        canSend: true,
+        models,
+        stopBusy: false,
+        onLoadMoreHistory: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onModelChange: vi.fn(),
+        onThinkingChange: vi.fn(),
+        onDraftChange: vi.fn(),
         onSend: vi.fn(),
         onStopRun: vi.fn(),
         onAvatarShuffle: vi.fn(),
@@ -81,14 +82,14 @@ describe("AgentChatPanel scrolling", () => {
       createElement(AgentChatPanel, {
         agent: { ...agent, outputLines: ["> hello", "first answer", "second answer"] },
         isSelected: true,
-	        canSend: true,
-	        models,
-	        stopBusy: false,
-	        onLoadMoreHistory: vi.fn(),
-	        onOpenSettings: vi.fn(),
-	        onModelChange: vi.fn(),
-	        onThinkingChange: vi.fn(),
-	        onDraftChange: vi.fn(),
+        canSend: true,
+        models,
+        stopBusy: false,
+        onLoadMoreHistory: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onModelChange: vi.fn(),
+        onThinkingChange: vi.fn(),
+        onDraftChange: vi.fn(),
         onSend: vi.fn(),
         onStopRun: vi.fn(),
         onAvatarShuffle: vi.fn(),
@@ -105,6 +106,69 @@ describe("AgentChatPanel scrolling", () => {
       (Element.prototype as unknown as { scrollIntoView: ReturnType<typeof vi.fn> })
         .scrollIntoView
     ).toHaveBeenCalled();
+  });
+
+  it("scrolls to the bottom when a different agent is opened", async () => {
+    const scrollIntoView = vi.fn();
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scrollIntoView;
+
+    const { rerender } = render(
+      createElement(AgentChatPanel, {
+        agent: createAgent({
+          outputLines: ["> hello", "first answer"],
+        }),
+        isSelected: true,
+        canSend: true,
+        models,
+        stopBusy: false,
+        onLoadMoreHistory: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onModelChange: vi.fn(),
+        onThinkingChange: vi.fn(),
+        onDraftChange: vi.fn(),
+        onSend: vi.fn(),
+        onStopRun: vi.fn(),
+        onAvatarShuffle: vi.fn(),
+      })
+    );
+
+    const scrollEl = screen.getByTestId("agent-chat-scroll");
+    Object.defineProperty(scrollEl, "clientHeight", { value: 100, configurable: true });
+    Object.defineProperty(scrollEl, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollEl, "scrollTop", { value: 0, writable: true, configurable: true });
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+    });
+
+    scrollIntoView.mockClear();
+
+    rerender(
+      createElement(AgentChatPanel, {
+        agent: createAgent({
+          agentId: "agent-2",
+          name: "Agent Two",
+          sessionKey: "agent:agent-2:studio:test-session",
+          outputLines: ["> another", "reply"],
+        }),
+        isSelected: true,
+        canSend: true,
+        models,
+        stopBusy: false,
+        onLoadMoreHistory: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onModelChange: vi.fn(),
+        onThinkingChange: vi.fn(),
+        onDraftChange: vi.fn(),
+        onSend: vi.fn(),
+        onStopRun: vi.fn(),
+        onAvatarShuffle: vi.fn(),
+      })
+    );
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+    });
   });
 
   it("shows history truncation banner only when scrolled to top", () => {

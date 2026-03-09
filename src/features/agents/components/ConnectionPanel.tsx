@@ -20,6 +20,7 @@ type ConnectionPanelProps = {
     | null;
   saving: boolean;
   testing: boolean;
+  disconnecting: boolean;
   onGatewayUrlChange: (value: string) => void;
   onTokenChange: (value: string) => void;
   onSaveSettings: () => void;
@@ -41,6 +42,7 @@ export const ConnectionPanel = ({
   testResult,
   saving,
   testing,
+  disconnecting,
   onGatewayUrlChange,
   onTokenChange,
   onSaveSettings,
@@ -48,7 +50,7 @@ export const ConnectionPanel = ({
   onDisconnect,
   onClose,
 }: ConnectionPanelProps) => {
-  const actionBusy = saving || testing;
+  const actionBusy = saving || testing || disconnecting;
   const tokenHelper = hasStoredToken
     ? "Stored token available on this Studio host. Leave blank to keep it."
     : localGatewayDefaultsHasToken
@@ -88,7 +90,7 @@ export const ConnectionPanel = ({
               onClick={onDisconnect}
               disabled={actionBusy}
             >
-              Disconnect
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
             </button>
           ) : null}
         </div>

@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -27,6 +27,78 @@ describe("OpenClawGatewayAdapter", () => {
       await closeWebSocketServer(upstream);
       upstream = null;
     }
+    vi.useRealTimers();
+  });
+
+  it("honors per-request timeout overrides", async () => {
+    vi.useFakeTimers();
+
+    class TimeoutSocket extends EventEmitter {
+      readyState: number = WebSocket.OPEN;
+
+      close() {
+        if (this.readyState === WebSocket.CLOSED) return;
+        this.readyState = WebSocket.CLOSED;
+        this.emit("close");
+      }
+
+      terminate() {
+        this.close();
+      }
+
+      send(raw: string, callback?: (err?: Error) => void) {
+        const parsed = JSON.parse(raw) as { id?: string; method?: string };
+        callback?.();
+        if (parsed.method !== "connect" || !parsed.id) {
+          return;
+        }
+        queueMicrotask(() => {
+          this.emit(
+            "message",
+            JSON.stringify({
+              type: "res",
+              id: parsed.id,
+              ok: true,
+              payload: { type: "hello-ok", protocol: 3 },
+            })
+          );
+        });
+      }
+    }
+
+    const socket = new TimeoutSocket();
+    const adapter = new OpenClawGatewayAdapter({
+      loadSettings: () => ({ url: "ws://127.0.0.1:9", token: "tkn" }),
+      createWebSocket: () => socket as unknown as WebSocket,
+    });
+
+    queueMicrotask(() => {
+      socket.emit("message", JSON.stringify({ type: "event", event: "connect.challenge", payload: {} }));
+    });
+
+    await adapter.start();
+
+    let settled = false;
+    const request = adapter.request("cron.run", { id: "job-1" }, { timeoutMs: 25_000 });
+    void request.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    await vi.advanceTimersByTimeAsync(24_999);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(request).rejects.toThrow(
+      "Gateway request timed out after 25000ms for method: cron.run"
+    );
+
+    await adapter.stop();
   });
 
   it("rejects in-flight requests immediately when the socket closes", async () => {

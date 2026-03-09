@@ -5,6 +5,8 @@ import { serializeRuntimeInitFailure } from "@/lib/controlplane/runtime-init-err
 import { bootstrapDomainRuntime } from "@/lib/controlplane/runtime-route-bootstrap";
 import type { ControlPlaneRuntime } from "@/lib/controlplane/runtime";
 
+export const LONG_RUNNING_GATEWAY_INTENT_TIMEOUT_MS = 600_000;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === "object" && !Array.isArray(value));
 
@@ -56,14 +58,18 @@ export const parseIntentBody = async (request: Request): Promise<Record<string, 
 
 export const executeGatewayIntent = async <T>(
   method: string,
-  params: unknown
+  params: unknown,
+  options?: { timeoutMs?: number }
 ): Promise<NextResponse> => {
   const runtimeOrError = await ensureDomainIntentRuntime();
   if (runtimeOrError instanceof Response) {
     return runtimeOrError as NextResponse;
   }
   try {
-    const payload = await runtimeOrError.callGateway<T>(method, params);
+    const payload =
+      typeof options?.timeoutMs === "number"
+        ? await runtimeOrError.callGateway<T>(method, params, options)
+        : await runtimeOrError.callGateway<T>(method, params);
     return NextResponse.json({ ok: true, payload });
   } catch (err) {
     if (err instanceof ControlPlaneGatewayError) {

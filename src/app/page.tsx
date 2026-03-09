@@ -230,6 +230,7 @@ const AgentStudioPage = () => {
     testResult,
     saving: gatewaySaving,
     testing: gatewayTesting,
+    disconnecting: gatewayDisconnecting,
     saveSettings,
     testConnection,
     disconnect,
@@ -838,12 +839,7 @@ const AgentStudioPage = () => {
     }
   }, []);
 
-  const {
-    loadSummarySnapshot,
-    loadAgentHistory,
-    loadMoreAgentHistory,
-    clearHistoryInFlight,
-  } = useRuntimeSyncController({
+  const { loadAgentHistory, loadMoreAgentHistory, clearHistoryInFlight } = useRuntimeSyncController({
     status: coreStatus,
     gatewayUrl,
     agents,
@@ -1302,7 +1298,6 @@ const AgentStudioPage = () => {
     },
     onRuntimeStatus: (event) => {
       applyRuntimeStatusEvent(event);
-      void loadSummarySnapshot();
     },
     resumeKey: runtimeStreamResumeKey ?? undefined,
   });
@@ -1427,6 +1422,7 @@ const AgentStudioPage = () => {
               testResult={testResult}
               saving={gatewaySaving}
               testing={gatewayTesting}
+              disconnecting={gatewayDisconnecting}
               onGatewayUrlChange={setGatewayUrl}
               onTokenChange={setToken}
               onUseLocalDefaults={useLocalGatewayDefaults}
@@ -1471,28 +1467,35 @@ const AgentStudioPage = () => {
         />
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3 md:px-5 md:pb-5 md:pt-3">
           {connectionPanelVisible ? (
-            <div className="pointer-events-none fixed inset-x-0 top-12 z-[140] flex justify-center px-3 sm:px-4 md:px-5">
-              <div className="glass-panel pointer-events-auto w-full max-w-4xl !bg-card px-4 py-4 sm:px-6 sm:py-6">
-                <ConnectionPanel
-                  savedGatewayUrl={gatewayUrl}
-                  draftGatewayUrl={draftGatewayUrl}
-                  token={token}
-                  hasStoredToken={hasStoredToken}
-                  localGatewayDefaultsHasToken={localGatewayDefaultsHasToken}
-                  hasUnsavedChanges={hasUnsavedChanges}
-                  status={gatewayStatus}
-                  statusReason={statusReason}
-                  error={gatewayError}
-                  testResult={testResult}
-                  saving={gatewaySaving}
-                  testing={gatewayTesting}
-                  onGatewayUrlChange={setGatewayUrl}
-                  onTokenChange={setToken}
-                  onSaveSettings={() => void saveSettings()}
-                  onTestConnection={() => void testConnection()}
-                  onDisconnect={() => void disconnect()}
-                  onClose={() => setShowConnectionPanel(false)}
-                />
+            <div className="fixed inset-0 z-[140]" data-testid="gateway-connection-overlay">
+              <div
+                className="absolute inset-0 bg-transparent"
+                onClick={() => setShowConnectionPanel(false)}
+              />
+              <div className="pointer-events-none absolute inset-x-0 top-12 flex justify-center px-3 sm:px-4 md:px-5">
+                <div className="glass-panel pointer-events-auto w-full max-w-4xl !bg-card px-4 py-4 sm:px-6 sm:py-6">
+                  <ConnectionPanel
+                    savedGatewayUrl={gatewayUrl}
+                    draftGatewayUrl={draftGatewayUrl}
+                    token={token}
+                    hasStoredToken={hasStoredToken}
+                    localGatewayDefaultsHasToken={localGatewayDefaultsHasToken}
+                    hasUnsavedChanges={hasUnsavedChanges}
+                    status={gatewayStatus}
+                    statusReason={statusReason}
+                    error={gatewayError}
+                    testResult={testResult}
+                    saving={gatewaySaving}
+                    testing={gatewayTesting}
+                    disconnecting={gatewayDisconnecting}
+                    onGatewayUrlChange={setGatewayUrl}
+                    onTokenChange={setToken}
+                    onSaveSettings={() => void saveSettings()}
+                    onTestConnection={() => void testConnection()}
+                    onDisconnect={() => void disconnect()}
+                    onClose={() => setShowConnectionPanel(false)}
+                  />
+                </div>
               </div>
             </div>
           ) : null}

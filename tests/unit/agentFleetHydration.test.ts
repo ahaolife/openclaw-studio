@@ -10,6 +10,7 @@ describe("hydrateAgentFleetFromGateway", () => {
     const settings: StudioSettings = {
       version: 1,
       gateway: null,
+      gatewayAutoStart: true,
       focused: {},
       avatars: {
         "ws://localhost:18789": {
@@ -246,7 +247,13 @@ describe("hydrateAgentFleetFromGateway", () => {
       client: { call },
       gatewayUrl: "ws://127.0.0.1:18789",
       cachedConfigSnapshot: null,
-      loadStudioSettings: async () => ({ version: 1, gateway: null, focused: {}, avatars: {} }),
+      loadStudioSettings: async () => ({
+        version: 1,
+        gateway: null,
+        gatewayAutoStart: true,
+        focused: {},
+        avatars: {},
+      }),
       isDisconnectLikeError: () => false,
     });
 
@@ -288,7 +295,13 @@ describe("hydrateAgentFleetFromGateway", () => {
       client: { call },
       gatewayUrl: "ws://127.0.0.1:18789",
       cachedConfigSnapshot: null,
-      loadStudioSettings: async () => ({ version: 1, gateway: null, focused: {}, avatars: {} }),
+      loadStudioSettings: async () => ({
+        version: 1,
+        gateway: null,
+        gatewayAutoStart: true,
+        focused: {},
+        avatars: {},
+      }),
       isDisconnectLikeError: () => false,
       logError,
     });
@@ -330,7 +343,13 @@ describe("hydrateAgentFleetFromGateway", () => {
       client: { call },
       gatewayUrl: "ws://127.0.0.1:18789",
       cachedConfigSnapshot: null,
-      loadStudioSettings: async () => ({ version: 1, gateway: null, focused: {}, avatars: {} }),
+      loadStudioSettings: async () => ({
+        version: 1,
+        gateway: null,
+        gatewayAutoStart: true,
+        focused: {},
+        avatars: {},
+      }),
       isDisconnectLikeError: () => false,
     });
 

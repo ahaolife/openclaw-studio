@@ -8,16 +8,22 @@ import {
   SQLiteControlPlaneProjectionStore,
   type BackfillAgentOutboxResult,
 } from "@/lib/controlplane/projection-store";
+import { loadStudioSettings } from "@/lib/studio/settings-store";
 
 type ControlPlaneRuntimeOptions = {
   adapterOptions?: OpenClawAdapterOptions;
   dbPath?: string;
 };
 
+type EnsureStartedOptions = {
+  force?: boolean;
+};
+
 export class ControlPlaneRuntime {
   private readonly store: SQLiteControlPlaneProjectionStore;
   private readonly adapter: OpenClawGatewayAdapter;
   private readonly eventSubscribers = new Set<(entry: ControlPlaneOutboxEntry) => void>();
+  private autoStartEnabled = true;
 
   constructor(options?: ControlPlaneRuntimeOptions) {
     this.store = new SQLiteControlPlaneProjectionStore(options?.dbPath);
@@ -27,11 +33,20 @@ export class ControlPlaneRuntime {
     });
   }
 
-  async ensureStarted(): Promise<void> {
+  async ensureStarted(options: EnsureStartedOptions = {}): Promise<void> {
+    if (options.force) {
+      this.autoStartEnabled = true;
+    } else if (loadStudioSettings().gatewayAutoStart === false) {
+      this.autoStartEnabled = false;
+      return;
+    } else {
+      this.autoStartEnabled = true;
+    }
     await this.adapter.start();
   }
 
   async disconnect(): Promise<void> {
+    this.autoStartEnabled = false;
     await this.adapter.stop();
   }
 
@@ -40,7 +55,11 @@ export class ControlPlaneRuntime {
   }
 
   async reconnectForGatewaySettingsChange(): Promise<void> {
-    if (this.adapter.getStatus() === "stopped") return;
+    this.autoStartEnabled = true;
+    if (this.adapter.getStatus() === "stopped") {
+      await this.adapter.start();
+      return;
+    }
     await this.adapter.stop();
     await this.adapter.start();
   }
@@ -72,8 +91,12 @@ export class ControlPlaneRuntime {
     };
   }
 
-  async callGateway<T = unknown>(method: string, params: unknown): Promise<T> {
-    return await this.adapter.request<T>(method, params);
+  async callGateway<T = unknown>(
+    method: string,
+    params: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<T> {
+    return await this.adapter.request<T>(method, params, options);
   }
 
   close(): void {

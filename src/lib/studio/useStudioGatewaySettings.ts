@@ -92,6 +92,7 @@ type StudioGatewaySettingsState = {
     | null;
   saving: boolean;
   testing: boolean;
+  disconnecting: boolean;
   saveSettings: () => Promise<boolean>;
   testConnection: () => Promise<boolean>;
   disconnect: () => Promise<void>;
@@ -148,6 +149,7 @@ export const useStudioGatewaySettings = (
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const manualDisconnectRef = useRef(false);
   const didAutoConnectRef = useRef(false);
@@ -264,6 +266,9 @@ export const useStudioGatewaySettings = (
   }, [applySettingsEnvelope, settingsCoordinator]);
 
   const saveSettings = useCallback(async () => {
+    if (disconnecting) {
+      return false;
+    }
     const trimmedGatewayUrl = draftGatewayUrl.trim();
     const trimmedToken = token.trim();
     const canUseExistingToken = hasStoredToken || localGatewayDefaultsHasToken;
@@ -314,6 +319,7 @@ export const useStudioGatewaySettings = (
     }
   }, [
     applySettingsEnvelope,
+    disconnecting,
     draftGatewayUrl,
     hasStoredToken,
     localGatewayDefaultsHasToken,
@@ -323,6 +329,9 @@ export const useStudioGatewaySettings = (
   ]);
 
   const testConnection = useCallback(async () => {
+    if (disconnecting) {
+      return false;
+    }
     const trimmedGatewayUrl = draftGatewayUrl.trim();
     if (!trimmedGatewayUrl) {
       setActionError("Gateway URL is required.");
@@ -363,14 +372,14 @@ export const useStudioGatewaySettings = (
     } finally {
       setTesting(false);
     }
-  }, [draftGatewayUrl, token]);
+  }, [disconnecting, draftGatewayUrl, token]);
 
   const disconnect = useCallback(async () => {
+    if (disconnecting) return;
     manualDisconnectRef.current = true;
+    setDisconnecting(true);
     setActionError(null);
     setTestResult(null);
-    setStatus("disconnected");
-    setStatusReason(null);
     setConnectionError(null);
     try {
       const summary = await fetchJson<RuntimeSummaryEnvelope>("/api/runtime/disconnect", {
@@ -382,8 +391,10 @@ export const useStudioGatewaySettings = (
       setStatus("error");
       setStatusReason(message);
       setActionError(message);
+    } finally {
+      setDisconnecting(false);
     }
-  }, [applyRuntimeSummary]);
+  }, [applyRuntimeSummary, disconnecting]);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -451,6 +462,7 @@ export const useStudioGatewaySettings = (
       testResult,
       saving,
       testing,
+      disconnecting,
       saveSettings,
       testConnection,
       disconnect,
@@ -475,6 +487,7 @@ export const useStudioGatewaySettings = (
       localGatewayDefaultsHasToken,
       saveSettings,
       saving,
+      disconnecting,
       setGatewayUrl,
       setToken,
       status,

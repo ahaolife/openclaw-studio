@@ -161,6 +161,7 @@ describe("studioBootstrapWorkflow", () => {
     const settings: StudioSettings = {
       version: 1,
       gateway: null,
+      gatewayAutoStart: true,
       focused: {
         "https://gateway.test": {
           mode: "focused",
@@ -198,6 +199,7 @@ describe("studioBootstrapWorkflow", () => {
     const settings: StudioSettings = {
       version: 1,
       gateway: null,
+      gatewayAutoStart: true,
       focused: {
         "https://gateway.test": {
           mode: "focused",
